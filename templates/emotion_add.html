@@ -1,0 +1,35 @@
+{% extends "base.html" %}
+{% block title %}Add emotion to {{ character }} — F5-TTS Manager{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ character }} <span style="color:#8b949e;font-weight:400">/</span> add emotion</h1>
+  <a href="/character/{{ character }}" class="btn btn-secondary">← Back</a>
+</div>
+
+<form method="POST" enctype="multipart/form-data">
+  <div class="form-group">
+    <label>Emotion</label>
+    <select name="emotion" required>
+      <option value="">— Select —</option>
+      {% for e in core_emotions %}
+      <option value="{{ e }}">{{ e }}</option>
+      {% endfor %}
+    </select>
+  </div>
+
+  <div class="form-group">
+    <label>Audio file</label>
+    <input type="file" name="audio" accept=".wav,.mp3,.flac" required>
+  </div>
+
+  <div class="form-group">
+    <label>Reference text (transcription)</label>
+    <textarea name="text" rows="3" placeholder="Enter the transcription of the audio..."></textarea>
+  </div>
+
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">Add Emotion</button>
+    <a href="/character/{{ character }}" class="btn btn-secondary">Cancel</a>
+  </div>
+</form>
+{% endblock %}

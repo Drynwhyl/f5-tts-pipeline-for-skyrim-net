@@ -1,0 +1,17 @@
+{
+  "emotion_tag": {
+    "open": "[",
+    "close": "]"
+  },
+  "emotion_map": {
+    "aggressive": ["angry", "furious", "annoyed", "hostile", "assertive"],
+    "happy": ["joyful", "excited", "enthusiastic", "proud", "laughing"],
+    "calm": ["whispering", "relaxed", "intimate", "mysterious"],
+    "sad": ["tired", "depressed", "guilty", "disappointed", "empathetic"],
+    "scared": ["panicked", "anxious", "terrified", "shocked"],
+    "normal": ["polite", "thoughtful", "serious", "neutral"]
+  },
+  "ignore_player_voice": true,
+  "ignored_voice_patterns": ["player voice", "player_voice"],
+  "cloned_voices_dir": "_cloned"
+}

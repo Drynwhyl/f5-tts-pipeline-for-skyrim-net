@@ -1,0 +1,96 @@
+{% extends "base.html" %}
+{% block title %}Settings — F5-TTS Manager{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Settings</h1>
+</div>
+
+<form method="POST">
+  <div class="config-section">
+    <h3>Emotion Tags</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      LLM wraps emotion names in these delimiters in its response, e.g.
+      <code>[angry]</code> or <code>*sad*</code> or <code>&lt;happy&gt;</code>.
+    </p>
+    <div style="display:flex;gap:16px">
+      <div class="form-group" style="flex:1">
+        <label>Opening delimiter</label>
+        <input type="text" name="tag_open" value="{{ config.emotion_tag.open }}" maxlength="2">
+      </div>
+      <div class="form-group" style="flex:1">
+        <label>Closing delimiter</label>
+        <input type="text" name="tag_close" value="{{ config.emotion_tag.close }}" maxlength="2">
+      </div>
+    </div>
+    <div class="tag-preview" id="tag-preview">
+      [angry] Я же говорил тебе не приходить сюда!
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>Emotion Aliases</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Map LLM-generated emotion tags to core profiles.
+      Core profile must have a matching <code>.wav</code> in the character's directory.
+    </p>
+    <div id="emotion-map">
+      {% for core, aliases in config.emotion_map.items() %}
+      <div class="map-row">
+        <input type="text" name="map_core" value="{{ core }}" placeholder="Core emotion" class="core-input">
+        <span class="sep">→</span>
+        <input type="text" name="map_aliases" value="{{ aliases | join(', ') }}" placeholder="alias1, alias2">
+        <button type="button" class="btn-remove" onclick="this.parentElement.remove()">×</button>
+      </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm add-row-btn" onclick="addMapRow()">+ Add Row</button>
+  </div>
+
+  <div class="config-section">
+    <h3>LLM Prompt Template</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Copy this into your SkyrimNet LLM prompt to enable emotion tagging.
+    </p>
+    <textarea id="prompt-template" rows="6" readonly
+      onclick="this.select()">When responding as a character, prefix each sentence with an emotion tag in {{ config.emotion_tag.open }}{{ config.emotion_tag.close }} brackets. Choose from: aggressive, calm, happy, normal, sad, scared. Example: {{ config.emotion_tag.open }}happy{{ config.emotion_tag.close }} Hello there!</textarea>
+  </div>
+
+  <div class="config-section">
+    <h3>Player Voice Filter</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      SkyrimNet sends TTS requests for <code>player voice</code> which isn't registered here.
+      Enable this to silently return silence instead of raising errors.
+    </p>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" name="ignore_player_voice" value="1"
+          {% if config.ignore_player_voice %}checked{% endif %}>
+        Ignore player voice requests
+      </label>
+    </div>
+    <div class="form-group">
+      <label>Ignored voice patterns (comma-separated, case-insensitive)</label>
+      <input type="text" name="ignored_voice_patterns"
+        value="{{ config.ignored_voice_patterns | join(', ') }}">
+    </div>
+  </div>
+
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">Save Settings</button>
+  </div>
+</form>
+
+<script>
+function addMapRow() {
+  var div = document.createElement('div');
+  div.className = 'map-row';
+  div.innerHTML = `
+    <input type="text" name="map_core" value="" placeholder="Core emotion">
+    <span class="sep">→</span>
+    <input type="text" name="map_aliases" value="" placeholder="alias1, alias2">
+    <button type="button" class="btn-remove" onclick="this.parentElement.remove()">×</button>
+  `;
+  document.getElementById('emotion-map').appendChild(div);
+}
+</script>
+{% endblock %}

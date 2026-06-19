@@ -1,0 +1,12 @@
+# Model weights
+F5TTS_v1_Base_v2/
+
+# Python cache
+__pycache__/
+*.pyc
+
+# Voice data (user-generated)
+voices/
+
+# Temp
+/tmp/

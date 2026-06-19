@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% block title %}TTS Preview — F5-TTS Manager{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>TTS Preview</h1>
+</div>
+
+<form method="POST" action="/tts-test">
+  <div style="display:flex;gap:16px">
+    <div class="form-group" style="flex:1">
+      <label>Character</label>
+      <select name="voice" required>
+        <option value="">— Select —</option>
+        {% for c in characters %}
+        <option value="{{ c.name }}" {% if selected_voice == c.name %}selected{% endif %}>{{ c.name }}</option>
+        {% endfor %}
+      </select>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>Text <span style="color:#8b949e;font-weight:400;text-transform:none">— wrap an emotion tag around the start, e.g. <code>{{ config.emotion_tag.open }}angry{{ config.emotion_tag.close }}</code></span></label>
+    <input type="text" name="input"
+      placeholder='{{ config.emotion_tag.open }}angry{{ config.emotion_tag.close }} Я же говорил тебе не приходить сюда!'{% if gen_input %}
+      value="{{ gen_input }}"{% endif %}>
+  </div>
+
+  <div style="display:flex;gap:16px;align-items:end">
+    <div class="form-group" style="flex:0 0 auto">
+      <label class="checkbox-label" style="display:flex;align-items:center;gap:8px;cursor:pointer;text-transform:none;letter-spacing:0;font-size:14px;color:#e1e4e8">
+        <input type="checkbox" name="random_seed" value="1" onchange="toggleSeedInput(this)" {% if random_seed %}checked{% endif %} style="width:16px;height:16px;cursor:pointer">
+        Use random seed
+      </label>
+    </div>
+    <div class="form-group" style="flex:1">
+      <label>Seed</label>
+      <input type="number" name="seed" id="seed-input" min="0" max="2147483647"
+        placeholder="e.g. 42"
+        {% if random_seed %}disabled{% endif %}
+        {% if selected_seed is not none and not random_seed %}value="{{ selected_seed }}"{% endif %}>
+    </div>
+  </div>
+
+  <div class="form-group">
+    <label>NFE Steps <span style="color:#8b949e;font-weight:400;text-transform:none">— higher = better quality, slower. 64 default, 32 for speed</span></label>
+    <input type="range" name="nfe_step" id="nfe-slider" min="8" max="64" step="8"
+      value="{{ nfe_step }}" oninput="updateNfeLabel(this)">
+    <span id="nfe-label" style="font-size:13px;color:#8b949e;margin-left:8px">{{ nfe_step }}</span>
+  </div>
+
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">Generate</button>
+  </div>
+</form>
+
+{% if audio_data %}
+<div class="preview-result">
+  <audio src="data:audio/wav;base64,{{ audio_data }}" controls autoplay preload="auto"></audio>
+  <p style="margin-top:12px;color:#8b949e;font-size:13px">
+    {% if used_seed is not none %}Seed: <code>{{ used_seed }}</code> · {% endif %}
+    NFE steps: <code>{{ nfe_step }}</code>
+  </p>
+</div>
+{% endif %}
+
+{% if not characters %}
+<div class="empty-state" style="padding:30px">
+  <p>No characters configured. Create one first.</p>
+  <a href="/character/new" class="btn btn-primary">Create Character</a>
+</div>
+{% endif %}
+
+<script>
+function toggleSeedInput(checkbox) {
+  var input = document.getElementById('seed-input');
+  input.disabled = checkbox.checked;
+  if (checkbox.checked) input.value = '';
+}
+function updateNfeLabel(slider) {
+  document.getElementById('nfe-label').textContent = slider.value;
+}
+</script>
+{% endblock %}

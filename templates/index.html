@@ -1,0 +1,72 @@
+{% extends "base.html" %}
+{% block title %}Characters — F5-TTS Manager{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Characters</h1>
+  <a href="/character/new" class="btn btn-primary">+ New Character</a>
+</div>
+
+{% if characters %}
+<h2 style="margin-bottom:12px;color:#8b949e;font-size:16px;font-weight:500">Custom Voices</h2>
+<div class="card-grid">
+  {% for c in characters %}
+  <div class="card">
+    <h3><a href="/character/{{ c.name }}">{{ c.name }}</a></h3>
+    <div class="emotion-badges">
+      {% for e in c.emotions %}
+      <span class="emotion-badge {{ e }}">{{ e }}</span>
+      {% endfor %}
+    </div>
+    <div class="card-actions">
+      <a href="/character/{{ c.name }}" class="btn btn-secondary btn-sm">View</a>
+      <button class="btn btn-danger btn-sm" onclick="confirmDelete('{{ c.name }}')">Delete</button>
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>No custom voices yet</h2>
+  <p>Create your first character profile with emotional voices.</p>
+  <a href="/character/new" class="btn btn-primary">Create Character</a>
+</div>
+{% endif %}
+
+{% if cloned_characters %}
+<details style="margin-top:32px" {% if not characters %}open{% endif %}>
+  <summary style="cursor:pointer;font-size:16px;font-weight:500;color:#8b949e;padding:8px 0">
+    Skyrim Cloned Voices ({{ cloned_characters | length }})
+  </summary>
+  <div class="card-grid" style="margin-top:8px;opacity:0.8">
+    {% for c in cloned_characters %}
+    <div class="card card-cloned">
+      <h3><a href="/character/{{ c.name }}">{{ c.name }}</a></h3>
+      <div class="emotion-badges">
+        {% for e in c.emotions %}
+        <span class="emotion-badge {{ e }}">{{ e }}</span>
+        {% endfor %}
+      </div>
+      <div class="card-actions">
+        <a href="/character/{{ c.name }}" class="btn btn-secondary btn-sm">View</a>
+        <button class="btn btn-danger btn-sm" onclick="confirmDelete('{{ c.name }}')">Delete</button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+
+<form id="delete-form" method="POST" style="display:none">
+  <input type="hidden" name="_method" value="delete">
+</form>
+
+<script>
+function confirmDelete(name) {
+  if (confirm('Delete character "' + name + '" and all its emotion profiles?\nThis cannot be undone.')) {
+    var form = document.getElementById('delete-form');
+    form.action = '/character/' + encodeURIComponent(name) + '/delete';
+    form.submit();
+  }
+}
+</script>
+{% endblock %}

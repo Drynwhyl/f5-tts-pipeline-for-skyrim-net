@@ -1,0 +1,37 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}F5-TTS Manager{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <nav class="nav">
+    <div class="nav-inner">
+      <a href="/" class="nav-brand">🎙 F5-TTS Manager</a>
+      <div class="nav-links">
+        <a href="/">Characters</a>
+        <a href="/character/new">New Character</a>
+        <a href="/config">Settings</a>
+        <a href="/tts-test">TTS Preview</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="main">
+    {% if message %}
+    <div class="flash {{ message.type }}">{{ message.text }}</div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span>F5-TTS Russian Voice VM</span>
+    <span class="footer-links">
+      <a href="http://localhost:8000/docs" target="_blank">API Docs</a>
+      <a href="http://localhost:8000/health" target="_blank">Health</a>
+    </span>
+  </footer>
+</body>
+</html>

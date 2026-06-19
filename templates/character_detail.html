@@ -1,0 +1,59 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} — F5-TTS Manager{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>{{ name }}</h1>
+  <div class="btn-group" style="margin:0">
+    <a href="/character/{{ name }}/emotion/new" class="btn btn-primary btn-sm">+ Add Emotion</a>
+    <a href="/" class="btn btn-secondary btn-sm">← Back</a>
+    <button class="btn btn-danger btn-sm" onclick="confirmDeleteCharacter()">Delete Character</button>
+  </div>
+</div>
+
+{% if emotions %}
+<div class="emotion-badges" style="margin-bottom:20px">
+  {% for e in emotions %}
+  <span class="emotion-badge {{ e.name }}">{{ e.name }}</span>
+  {% endfor %}
+</div>
+
+{% for e in emotions %}
+<div class="emotion-card">
+  <div class="emotion-info">
+    <h4><span class="emotion-badge {{ e.name }}" style="font-size:14px">{{ e.name }}</span></h4>
+    <div class="ref-text">{{ e.text }}</div>
+    <audio src="{{ e.audio_url }}" controls preload="none"></audio>
+  </div>
+  <div class="emotion-actions">
+    <a href="/character/{{ name }}/emotion/{{ e.name }}/edit" class="btn btn-secondary btn-sm">Edit</a>
+    <button class="btn btn-danger btn-sm" onclick="confirmDeleteEmotion('{{ e.name }}')">Delete</button>
+  </div>
+</div>
+{% endfor %}
+
+<form id="delete-char-form" method="POST" action="/character/{{ name }}/delete" style="display:none"></form>
+<form id="delete-emotion-form" method="POST" style="display:none">
+  <input type="hidden" name="_method" value="delete">
+</form>
+
+<script>
+function confirmDeleteCharacter() {
+  if (confirm('Delete character "{{ name }}" and all its emotion profiles?\nThis cannot be undone.')) {
+    document.getElementById('delete-char-form').submit();
+  }
+}
+function confirmDeleteEmotion(emo) {
+  if (confirm('Delete the "{{ name }} / ' + emo + ' emotion profile?')) {
+    var form = document.getElementById('delete-emotion-form');
+    form.action = '/character/{{ name }}/emotion/' + encodeURIComponent(emo) + '/delete';
+    form.submit();
+  }
+}
+</script>
+{% else %}
+<div class="empty-state">
+  <h2>No emotion profiles</h2>
+  <p>This character exists but has no emotion files.</p>
+</div>
+{% endif %}
+{% endblock %}

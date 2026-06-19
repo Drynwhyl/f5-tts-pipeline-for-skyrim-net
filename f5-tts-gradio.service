@@ -1,0 +1,16 @@
+[Unit]
+Description=F5-TTS Gradio Web UI (Russian model)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=drynw
+WorkingDirectory=/home/drynw/models/f5-tts
+Environment=PATH=/home/drynw/f5-tts-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+ExecStart=/home/drynw/f5-tts-env/bin/python3 /home/drynw/models/f5-tts/run_gradio.py --host 0.0.0.0 --port 7860
+Restart=on-failure
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target

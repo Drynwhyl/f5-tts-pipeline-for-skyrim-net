@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}New Character — F5-TTS Manager{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>New Character</h1>
+  <a href="/" class="btn btn-secondary">← Back</a>
+</div>
+
+<form method="POST" enctype="multipart/form-data">
+  <div class="form-group">
+    <label>Character Name</label>
+    <input type="text" name="name" required placeholder="e.g. lidia, farkas, ulfric">
+  </div>
+
+  <h3 style="margin-bottom:12px">Emotion Profiles</h3>
+  <p style="color:#8b949e; font-size:13px; margin-bottom:16px">
+    Select emotions to configure. <strong>Normal</strong> is required (fallback).
+    At minimum, upload an audio file for each selected emotion.
+  </p>
+
+  {% for emo in core_emotions %}
+  <div class="emotion-section">
+    <label class="checkbox-label">
+      <input type="checkbox" name="emotions" value="{{ emo }}"
+        {% if emo == "normal" %}checked required{% endif %}
+        onchange="toggleEmotion(this, '{{ emo }}')">
+      <span class="emotion-badge {{ emo }}">{{ emo }}</span>
+    </label>
+    <div class="emotion-fields {% if emo == 'normal' %}visible{% endif %}" id="fields-{{ emo }}">
+      <div class="form-group">
+        <label>Audio file</label>
+        <input type="file" name="audio_{{ emo }}" accept=".wav,.mp3,.flac"
+          {% if emo == "normal" %}required{% endif %}>
+      </div>
+      <div class="form-group">
+        <label>Reference text (transcription)</label>
+        <textarea name="text_{{ emo }}" placeholder="Enter the transcription of the audio..."></textarea>
+      </div>
+    </div>
+  </div>
+  {% endfor %}
+
+  <div class="btn-group">
+    <button type="submit" class="btn btn-primary">Create Character</button>
+    <a href="/" class="btn btn-secondary">Cancel</a>
+  </div>
+</form>
+
+<script>
+function toggleEmotion(checkbox, emo) {
+  document.getElementById('fields-' + emo).classList.toggle('visible', checkbox.checked);
+}
+</script>
+{% endblock %}
