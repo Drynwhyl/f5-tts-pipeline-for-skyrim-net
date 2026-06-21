@@ -29,6 +29,7 @@ from f5_tts.infer.utils_infer import (
     preprocess_ref_audio_text,
     infer_process,
 )
+from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("f5-tts-api")
@@ -96,9 +97,9 @@ class TTSRequest(BaseModel):
     input: str
     voice: str = "default"
     response_format: str = "wav"
-    speed: float = 1.0
+    speed: Optional[float] = Field(default=None)
     seed: Optional[int] = None
-    nfe_step: int = 64
+    nfe_step: int = Field(default_factory=lambda: DEFAULT_NFE_STEP)
 
 
 class ModelInfo(BaseModel):
@@ -121,6 +122,7 @@ app_config: dict = {}
 app_emotion_map: dict[str, str] = {}
 accentor: Optional[RUAccent] = None
 whisper_pipelines: dict[str, any] = {}
+DEFAULT_NFE_STEP = 64
 
 WHISPER_MODELS = {
     "turbo": "openai/whisper-large-v3-turbo",
@@ -155,6 +157,38 @@ def _apply_stress(text: str) -> str:
     except Exception as e:
         logger.warning("RUAccent failed on '%s': %s", text[:50], e)
         return text
+
+
+def _fix_terminal_punctuation(text: str) -> str:
+    text = text.rstrip()
+    if not text:
+        return text
+    text = re.sub(r'[.…]{2,}$', '.', text)
+    text = re.sub(r'[,;:\-–—]+$', '.', text)
+    if not re.search(r'[.!?]$', text):
+        text += '.'
+    return text
+
+
+def _sentence_case(text: str) -> str:
+    sentences = re.split(r'(?<=[.!?])\s+', text)
+    result = []
+    for s in sentences:
+        s = s.strip()
+        if not s:
+            continue
+        result.append(s[0].upper() + s[1:].lower())
+    return ' '.join(result)
+
+
+def _apply_fix_gen_text(text: str) -> str:
+    cfg = app_config or {}
+    fix = cfg.get("fix_gen_text", {}) or {}
+    if fix.get("terminal_punctuation", True):
+        text = _fix_terminal_punctuation(text)
+    if fix.get("sentence_case", True):
+        text = _sentence_case(text)
+    return text
 
 
 def _build_emotion_map(cfg: dict) -> dict[str, str]:
@@ -246,6 +280,32 @@ def load_app_config() -> dict:
         "ignore_player_voice": True,
         "ignored_voice_patterns": ["player voice", "player_voice"],
         "cloned_voices_dir": "_cloned",
+        "trim_settings": {
+            "max_ms": 12000,
+            "min_silence_len": 1000,
+            "silence_thresh": -50,
+            "keep_silence": 500,
+        },
+        "default_nfe_step": 64,
+        "narration_voice_override": "",
+        "dynamic_speed": {
+            "enabled": False,
+            "min_rate": 1.0,
+            "min_rate_length": 3.0,
+            "max_rate": 2.0,
+            "max_rate_length": 15.0,
+        },
+        "voice_overrides": {},
+        "ref_normalization": {
+            "target_dbfs": DEFAULT_NORMALIZATION_TARGET,
+            "normalize_on_the_fly": DEFAULT_NORMALIZE_ON_FLY,
+            "spectral_penalty": DEFAULT_SPECTRAL_PENALTY,
+        },
+        "custom_accent_dict": {},
+        "fix_gen_text": {
+            "sentence_case": True,
+            "terminal_punctuation": True,
+        },
     }
     config_path = Path(CONFIG_PATH)
     if config_path.exists():
@@ -262,6 +322,17 @@ def load_app_config() -> dict:
             json.dump(default, f, indent=2)
         logger.info(f"Created default config.json at {CONFIG_PATH}")
     return default
+
+
+def _get_trim_settings() -> dict:
+    """Return trim settings from app_config, falling back to defaults."""
+    ts = app_config.get("trim_settings", {}) if app_config else {}
+    return {
+        "max_ms": ts.get("max_ms", 12000),
+        "min_silence_len": ts.get("min_silence_len", 1000),
+        "silence_thresh": ts.get("silence_thresh", -50),
+        "keep_silence": ts.get("keep_silence", 500),
+    }
 
 
 def parse_emotion_tag(text: str, tag_open: str, tag_close: str) -> tuple[Optional[str], str]:
@@ -345,19 +416,22 @@ def load_models():
 
 @app.on_event("startup")
 def startup():
-    global app_config, app_emotion_map, accentor
+    global app_config, app_emotion_map, accentor, DEFAULT_NFE_STEP
     app_config = load_app_config()
+    DEFAULT_NFE_STEP = app_config.get("default_nfe_step", 64)
     app_emotion_map = _build_emotion_map(app_config)
     load_models()
     load_voice_registry()
     logger.info("Loading RUAccent...")
     try:
         accentor = RUAccent()
-        accentor.load(use_dictionary=True)
+        custom_dict = app_config.get("custom_accent_dict", {}) or {}
+        accentor.load(use_dictionary=True, custom_dict=custom_dict)
         logger.info("RUAccent loaded successfully")
         _transcribe_empty_refs()
         _stress_ref_texts()
         load_voice_registry()
+        _normalize_all_voices()
     except Exception as e:
         logger.warning("Failed to load RUAccent: %s", e)
         accentor = None
@@ -370,9 +444,91 @@ def list_models():
 
 SILENCE_SENTINEL = "__silence__"
 
-def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: float = 1.0, nfe_step: int = 64, seed: Optional[int] = None, save_ref_text_to: Optional[str] = None) -> tuple[bytes, int]:
+
+def _get_dynamic_speed(ref_audio_path: str, ref_text: str, gen_text: str, base_speed: float) -> float:
+    """Interpolate speech rate based on estimated gen_text duration using ref speaker's pace.
+
+    Uses ref_audio duration and ref_text length to compute chars/sec, then estimates
+    gen_text duration. Applies configured speed curve:
+      estimated_dur <= min_rate_length → min_rate
+      estimated_dur >= max_rate_length → max_rate
+      otherwise → linear interpolation
+
+    Returns base_speed * interpolated_rate.
+    """
+    if not app_config:
+        logger.warning("Dynamic speed: app_config is empty")
+        return base_speed
+    ds = app_config.get("dynamic_speed", {})
+    if not ds or not ds.get("enabled", False):
+        return base_speed
+
+    min_rate = float(ds.get("min_rate", 1.0))
+    min_dur = float(ds.get("min_rate_length", 3.0))
+    max_rate = float(ds.get("max_rate", 1.4))
+    max_dur = float(ds.get("max_rate_length", 15.0))
+
+    try:
+        ref_dur = float(__import__("subprocess").check_output(
+            ["ffprobe", "-v", "error", "-show_entries", "format=duration",
+             "-of", "csv=p=0", ref_audio_path]
+        ).decode().strip())
+    except Exception:
+        return base_speed
+
+    ref_text_len = len(ref_text.strip())
+    gen_text_len = len(gen_text.strip())
+
+    if ref_text_len == 0 or ref_dur <= 0:
+        return base_speed
+
+    estimated_dur = gen_text_len * ref_dur / ref_text_len
+
+    if estimated_dur <= min_dur:
+        rate = min_rate
+    elif estimated_dur >= max_dur:
+        rate = max_rate
+    else:
+        ratio = (estimated_dur - min_dur) / (max_dur - min_dur)
+        rate = min_rate + (max_rate - min_rate) * ratio
+
+    rate = max(0.3, min(rate, 2.0))
+    result = base_speed * rate
+    result = max(0.3, min(result, 2.0))
+
+    logger.info(
+        "Dynamic speed: estimated=%.1fs rate=%.2f speed=%.2f "
+        "(gen=%d ref=%d ref_dur=%.1fs min_r=%.1f@%.1fs max_r=%.1f@%.1fs)",
+        estimated_dur, rate, result,
+        gen_text_len, ref_text_len, ref_dur, min_rate, min_dur, max_rate, max_dur,
+    )
+    return result
+
+
+HOP_LENGTH = 256
+TARGET_SR = 24000
+
+
+def _apply_voice_speed_override(voice_name: str, speed: float) -> float:
+    """Cap speed per-character via config[voice_overrides][char][max_speed]."""
+    if speed <= 1.0 or not app_config:
+        return speed
+    overrides = app_config.get("voice_overrides", {}) or {}
+    vo = overrides.get(voice_name, {}) or {}
+    max_speed = vo.get("max_speed", 0)
+    if max_speed > 0 and speed > max_speed:
+        logger.info("Voice override: %s speed capped %.1f→%.1f", voice_name, speed, max_speed)
+        return max_speed
+    return speed
+
+
+def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optional[float] = None, nfe_step: Optional[int] = None, seed: Optional[int] = None, save_ref_text_to: Optional[str] = None) -> tuple[bytes, int]:
+    if nfe_step is None:
+        nfe_step = DEFAULT_NFE_STEP
+    if speed is None:
+        speed = 1.0
     if ref_audio_path == SILENCE_SENTINEL:
-        sr = 24000
+        sr = TARGET_SR
         silence = torch.zeros(1, sr)
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=True) as tmp:
             torchaudio.save(tmp.name, silence, sr)
@@ -381,24 +537,64 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: float =
     if seed is not None:
         torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
+    gen_text = _apply_fix_gen_text(gen_text)
     gen_text = _apply_stress(gen_text)
     ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(
         ref_audio_path, ref_text, show_info=logger.info
     )
     ref_text_processed = _apply_stress(ref_text_processed)
+
+    # On-the-fly loudness normalization (only for files in voices dir, not temp atempo)
+    if ref_audio_processed != SILENCE_SENTINEL and ref_audio_path.startswith(VOICES_DIR):
+        _normalize_audio(ref_audio_processed)
     if save_ref_text_to and not ref_text and ref_text_processed:
         Path(save_ref_text_to).write_text(ref_text_processed)
         logger.info("Saved auto-transcribed ref_text to %s", save_ref_text_to)
-    out_wave, sr, _ = infer_process(
-        ref_audio=ref_audio_processed,
-        ref_text=ref_text_processed,
-        gen_text=gen_text,
-        model_obj=model_obj,
-        vocoder=vocoder,
-        device=device,
-        speed=speed,
-        nfe_step=nfe_step,
-    )
+
+    cleanup_atempo = False
+    if speed > 1.0 and ref_audio_processed != SILENCE_SENTINEL:
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            atempo_path = tmp.name
+        __import__("subprocess").run(
+            ["ffmpeg", "-y", "-i", ref_audio_processed,
+             "-filter:a", f"atempo={speed}",
+             "-ac", "1", "-ar", str(TARGET_SR), atempo_path],
+            capture_output=True, check=True,
+        )
+        ref_audio_original = ref_audio_processed
+        ref_audio_processed = atempo_path
+        cleanup_atempo = True
+
+        logger.info("Ref atempo speed=%.1f applied", speed)
+
+        out_wave, sr, _ = infer_process(
+            ref_audio=ref_audio_processed,
+            ref_text=ref_text_processed,
+            gen_text=gen_text,
+            model_obj=model_obj,
+            vocoder=vocoder,
+            device=device,
+            speed=1.0,
+            nfe_step=nfe_step,
+        )
+    else:
+        out_wave, sr, _ = infer_process(
+            ref_audio=ref_audio_processed,
+            ref_text=ref_text_processed,
+            gen_text=gen_text,
+            model_obj=model_obj,
+            vocoder=vocoder,
+            device=device,
+            speed=1.0,
+            nfe_step=nfe_step,
+        )
+
+    if cleanup_atempo:
+        try:
+            os.unlink(ref_audio_processed)
+        except Exception:
+            pass
+
     if out_wave is None:
         raise HTTPException(status_code=500, detail="Failed to generate audio")
     audio_tensor = torch.from_numpy(out_wave).unsqueeze(0)
@@ -415,6 +611,13 @@ def _lookup_voice(voice_name: str, emotion: Optional[str] = None) -> tuple[str, 
         if voice_name.lower() in ignored:
             logger.info("Ignored player voice '%s', returning silence", voice_name)
             return ("__silence__", "")
+
+    # Narration voice override
+    override = (app_config or {}).get("narration_voice_override", "")
+    if override and voice_name == "dlc1seranavoice":
+        logger.info("Narration voice override: '%s' -> '%s'", voice_name, override)
+        voice_name = override
+
     if voice_name in voice_registry:
         voice_data = voice_registry[voice_name]
         emotions = voice_data["emotions"]
@@ -452,7 +655,9 @@ def text_to_speech(req: TTSRequest):
 
     ref_audio_path, ref_text = _lookup_voice(req.voice, emotion)
     save_ref = str(Path(ref_audio_path).with_suffix(".txt")) if ref_audio_path.startswith(VOICES_DIR) else None
-    content, _ = _tts_infer(ref_audio_path, ref_text, gen_text_clean, req.speed, req.nfe_step, req.seed, save_ref_text_to=save_ref)
+    speed = req.speed if req.speed is not None else _get_dynamic_speed(ref_audio_path, ref_text, gen_text_clean, 1.0)
+    speed = _apply_voice_speed_override(req.voice, speed)
+    content, _ = _tts_infer(ref_audio_path, ref_text, gen_text_clean, speed, req.nfe_step, req.seed, save_ref_text_to=save_ref)
 
     media_type = "audio/mpeg" if req.response_format == "mp3" else "audio/wav"
     return Response(content=content, media_type=media_type)
@@ -583,7 +788,9 @@ async def tts_to_audio(request: StarRequest):
 
         ref_audio_path, ref_text = _get_speaker_ref(speaker_wav)
         save_ref = str(Path(ref_audio_path).with_suffix(".txt")) if ref_audio_path.startswith(VOICES_DIR) else None
-        content, _ = _tts_infer(ref_audio_path, ref_text, gen_text, save_ref_text_to=save_ref)
+        speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text, 1.0)
+        speed = _apply_voice_speed_override(Path(speaker_wav).stem, speed)
+        content, _ = _tts_infer(ref_audio_path, ref_text, gen_text, speed, save_ref_text_to=save_ref)
 
         if save_path:
             save_dir = Path("/tmp/f5-tts-cache")
@@ -630,7 +837,10 @@ async def tts_to_audio(request: StarRequest):
 
         save_ref = str(Path(ref_audio_path).with_suffix(".txt")) if ref_audio_path.startswith(VOICES_DIR) else None
         try:
-            content, _ = _tts_infer(ref_audio_path, ref_text, gen_text, save_ref_text_to=save_ref)
+            speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text, 1.0)
+            voice_name = Path(speaker_name).stem if speaker_name else ""
+            speed = _apply_voice_speed_override(voice_name, speed)
+            content, _ = _tts_infer(ref_audio_path, ref_text, gen_text, speed, save_ref_text_to=save_ref)
         finally:
             if cleanup_tmp:
                 os.unlink(ref_audio_path)
@@ -650,6 +860,43 @@ class CreateLatentsJSON(BaseModel):
     text: str = ""
 
 
+def _normalize_audio(audio_path: str):
+    """Normalize a single audio file per config settings."""
+    cfg = app_config or {}
+    norm = cfg.get("ref_normalization", {}) or {}
+    target = float(norm.get("target_dbfs", DEFAULT_NORMALIZATION_TARGET))
+    sp = bool(norm.get("spectral_penalty", DEFAULT_SPECTRAL_PENALTY))
+    msg = normalize_loudness(audio_path, target_dbfs=target, spectral_penalty=sp)
+    if msg:
+        logger.info("Normalized '%s': %s", audio_path, msg)
+
+
+def _normalize_all_voices():
+    """Batch-normalize all voice audio files to the configured target."""
+    if not app_config:
+        return
+    norm = app_config.get("ref_normalization", {}) or {}
+    if not norm.get("normalize_on_the_fly", DEFAULT_NORMALIZE_ON_FLY):
+        return
+    count = 0
+    cloned_name = app_config.get("cloned_voices_dir", "_cloned")
+    for base in (Path(VOICES_DIR), Path(VOICES_DIR) / cloned_name):
+        if not base.is_dir():
+            continue
+        for voice_dir in base.iterdir():
+            if not voice_dir.is_dir():
+                continue
+            if voice_dir.name.startswith("_"):
+                continue
+            for audio_file in voice_dir.glob("*"):
+                if audio_file.suffix.lower() not in (".wav", ".mp3", ".flac"):
+                    continue
+                _normalize_audio(str(audio_file))
+                count += 1
+    if count:
+        logger.info("Batch-normalized %d audio files", count)
+
+
 def _save_cloned_voice(name: str, audio_file: UploadFile, ref_text: str, cloned_base: Path):
     voice_dir = cloned_base / name
     voice_dir.mkdir(parents=True, exist_ok=True)
@@ -657,9 +904,17 @@ def _save_cloned_voice(name: str, audio_file: UploadFile, ref_text: str, cloned_
     audio_path = voice_dir / f"normal{ext}"
     with open(audio_path, "wb") as f:
         f.write(audio_file.file.read())
-    if not ref_text.strip():
+
+    trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+    if trim_msg:
+        logger.info("Trimmed cloned audio for '%s': %s", name, trim_msg)
+        ref_text = _transcribe_audio_file(str(audio_path))
+    elif not ref_text.strip():
         logger.info("Empty ref text for cloned '%s', transcribing audio...", name)
         ref_text = _transcribe_audio_file(str(audio_path))
+
+    _normalize_audio(str(audio_path))
+
     ref_text = _apply_stress(ref_text)
     text_path = voice_dir / "normal.txt"
     text_path.write_text(ref_text)
@@ -752,9 +1007,16 @@ def _save_single_voice(name: str, audio_file: UploadFile, ref_text: str):
     with open(audio_path, "wb") as f:
         f.write(audio_file.file.read())
 
-    if not ref_text.strip():
+    trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+    if trim_msg:
+        logger.info("Trimmed audio for '%s': %s", name, trim_msg)
+        ref_text = _transcribe_audio_file(str(audio_path))
+    elif not ref_text.strip():
         logger.info("Empty ref text for '%s', transcribing audio...", name)
         ref_text = _transcribe_audio_file(str(audio_path))
+
+    _normalize_audio(str(audio_path))
+
     ref_text = _apply_stress(ref_text)
     text_path = voice_dir / "normal.txt"
     text_path.write_text(ref_text)
@@ -860,7 +1122,14 @@ async def upload_character(
         with open(audio_path, "wb") as f:
             f.write(await audio_file.read())
 
+        trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
         ref_text = locals().get(text_field, "")
+        if trim_msg:
+            logger.info("Trimmed %s/%s: %s", character, emotion_name, trim_msg)
+            ref_text = _transcribe_audio_file(str(audio_path))
+
+        _normalize_audio(str(audio_path))
+
         text_path = voice_dir / f"{emotion_name}.txt"
         text_path.write_text(ref_text)
 
@@ -908,12 +1177,18 @@ def list_characters():
 
 @app.post("/v1/reload")
 def reload_registry():
-    global app_config, app_emotion_map
+    global app_config, app_emotion_map, DEFAULT_NFE_STEP
     app_config = load_app_config()
+    DEFAULT_NFE_STEP = app_config.get("default_nfe_step", 64)
     app_emotion_map = _build_emotion_map(app_config)
     if accentor is not None:
         _transcribe_empty_refs()
         _stress_ref_texts()
+        custom_dict = app_config.get("custom_accent_dict", {}) or {}
+        accentor.custom_dict = custom_dict
+        accentor.accents.update(custom_dict)
+        logger.info("Updated RUAccent custom dict with %d entries", len(custom_dict))
+    _normalize_all_voices()
     load_voice_registry()
     logger.info("Config and voice registry reloaded from disk")
     return {"status": "ok", "characters": list(voice_registry.keys())}

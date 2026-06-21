@@ -4,14 +4,77 @@
     "close": "]"
   },
   "emotion_map": {
-    "aggressive": ["angry", "furious", "annoyed", "hostile", "assertive"],
-    "happy": ["joyful", "excited", "enthusiastic", "proud", "laughing"],
-    "calm": ["whispering", "relaxed", "intimate", "mysterious"],
-    "sad": ["tired", "depressed", "guilty", "disappointed", "empathetic"],
-    "scared": ["panicked", "anxious", "terrified", "shocked"],
-    "normal": ["polite", "thoughtful", "serious", "neutral"]
+    "aggressive": [
+      "angry",
+      "furious",
+      "annoyed",
+      "hostile",
+      "assertive"
+    ],
+    "happy": [
+      "joyful",
+      "excited",
+      "enthusiastic",
+      "proud",
+      "laughing"
+    ],
+    "calm": [
+      "whispering",
+      "relaxed",
+      "intimate",
+      "mysterious"
+    ],
+    "sad": [
+      "tired",
+      "depressed",
+      "guilty",
+      "disappointed",
+      "empathetic"
+    ],
+    "scared": [
+      "panicked",
+      "anxious",
+      "terrified",
+      "shocked"
+    ],
+    "normal": [
+      "polite",
+      "thoughtful",
+      "serious",
+      "neutral"
+    ]
   },
   "ignore_player_voice": true,
-  "ignored_voice_patterns": ["player voice", "player_voice"],
-  "cloned_voices_dir": "_cloned"
+  "ignored_voice_patterns": [
+    "player voice",
+    "player_voice"
+  ],
+  "cloned_voices_dir": "_cloned",
+  "trim_settings": {
+    "max_ms": 12000,
+    "min_silence_len": 1000,
+    "silence_thresh": -50,
+    "keep_silence": 500
+  },
+  "default_nfe_step": 16,
+  "narration_voice_override": "sacred_mage",
+  "dynamic_speed": {
+    "enabled": true,
+    "min_rate": 1.0,
+    "min_rate_length": 3.0,
+    "max_rate": 1.5,
+    "max_rate_length": 15.0
+  },
+  "voice_overrides": {},
+  "ref_normalization": {
+    "target_dbfs": -28.0,
+    "normalize_on_the_fly": true,
+    "spectral_penalty": true
+  },
+  "custom_accent_dict": {},
+  "fix_gen_text": {
+    "sentence_case": true,
+    "terminal_punctuation": true
+  },
+  "speed_min_frame_ratio": 0.6
 }

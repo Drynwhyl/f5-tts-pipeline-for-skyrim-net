@@ -56,6 +56,241 @@
   </div>
 
   <div class="config-section">
+    <h3>Generation Defaults</h3>
+    <div class="form-group">
+      <label>Default NFE Steps</label>
+      <p style="color:#8b949e;font-size:13px;margin-bottom:8px">
+        Used by SkyrimNet client requests that don't specify NFE step.
+        Higher = better quality, slower. 64 default.
+      </p>
+      <div style="display:flex;align-items:center;gap:12px">
+        <input type="range" name="default_nfe_step" id="nfe-config-slider"
+          min="8" max="64" step="8"
+          value="{{ config.default_nfe_step }}"
+          oninput="document.getElementById('nfe-config-label').textContent=this.value"
+          style="flex:1;max-width:300px">
+        <span id="nfe-config-label" style="font-size:14px;color:#e1e4e8;min-width:24px">{{ config.default_nfe_step }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>Dynamic Speed</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Speeds up long phrases based on the reference speaker's natural pace.
+      Estimated duration = <code>gen_text_len / ref_text_len * ref_audio_duration</code>.
+      Configure the speed curve with min/max rate at min/max duration thresholds.
+    </p>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" name="dynamic_speed_enabled" value="1"
+          {% if config.dynamic_speed.enabled %}checked{% endif %}>
+        Enable dynamic speed adjustment
+      </label>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label>Min rate</label>
+        <input type="range" name="ds_min_rate" value="{{ config.dynamic_speed.min_rate }}"
+          min="0.3" max="2.0" step="0.1"
+          oninput="document.getElementById('ds-min-rate-label').textContent=parseFloat(this.value).toFixed(1)"
+          style="width:100%">
+        <span id="ds-min-rate-label" style="font-size:13px;color:#8b949e">{{ config.dynamic_speed.min_rate }}</span>
+      </div>
+      <div class="form-group">
+        <label>Min rate length (s)</label>
+        <input type="range" name="ds_min_rate_length" value="{{ config.dynamic_speed.min_rate_length }}"
+          min="0.5" max="30.0" step="0.5"
+          oninput="document.getElementById('ds-min-len-label').textContent=parseFloat(this.value).toFixed(1)"
+          style="width:100%">
+        <span id="ds-min-len-label" style="font-size:13px;color:#8b949e">{{ config.dynamic_speed.min_rate_length }}</span>
+      </div>
+      <div class="form-group">
+        <label>Max rate</label>
+        <input type="range" name="ds_max_rate" value="{{ config.dynamic_speed.max_rate }}"
+          min="0.3" max="2.0" step="0.1"
+          oninput="document.getElementById('ds-max-rate-label').textContent=parseFloat(this.value).toFixed(1)"
+          style="width:100%">
+        <span id="ds-max-rate-label" style="font-size:13px;color:#8b949e">{{ config.dynamic_speed.max_rate }}</span>
+      </div>
+      <div class="form-group">
+        <label>Max rate length (s)</label>
+        <input type="range" name="ds_max_rate_length" value="{{ config.dynamic_speed.max_rate_length }}"
+          min="0.5" max="60.0" step="0.5"
+          oninput="document.getElementById('ds-max-len-label').textContent=parseFloat(this.value).toFixed(1)"
+          style="width:100%">
+        <span id="ds-max-len-label" style="font-size:13px;color:#8b949e">{{ config.dynamic_speed.max_rate_length }}</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>Reference Audio Normalization</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      F5-TTS copies the loudness of the reference audio. If some refs are loud and
+      others quiet, the generated voices will also be inconsistent. Normalization
+      adjusts all ref audio to the same target level &mdash; quieter refs = more
+      natural timbre and no clipping.
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label>Target loudness (dBFS)</label>
+        <input type="range" name="norm_target_dbfs"
+          value="{{ config.ref_normalization.target_dbfs }}"
+          min="-35" max="-15" step="1"
+          oninput="document.getElementById('norm-target-label').textContent = this.value"
+          style="width:100%">
+        <span id="norm-target-label" style="font-size:13px;color:#8b949e">{{ config.ref_normalization.target_dbfs }}</span>
+      </div>
+      <div class="form-group">
+        <label>Normalize on-the-fly</label>
+        <label class="toggle-switch">
+          <input type="hidden" name="normalize_on_the_fly" value="0">
+          <input type="checkbox" name="normalize_on_the_fly" value="1"
+            {% if config.ref_normalization.normalize_on_the_fly %}checked{% endif %}>
+          <span class="toggle-slider"></span>
+        </label>
+        <p style="color:#8b949e;font-size:12px;margin-top:4px">
+          Apply normalization to existing files at inference time.
+          Disable to only normalize new uploads.
+        </p>
+      </div>
+      <div class="form-group">
+        <label>Spectral balance penalty</label>
+        <label class="toggle-switch">
+          <input type="hidden" name="norm_spectral_penalty" value="0">
+          <input type="checkbox" name="norm_spectral_penalty" value="1"
+            {% if config.ref_normalization.spectral_penalty %}checked{% endif %}>
+          <span class="toggle-slider"></span>
+        </label>
+        <p style="color:#8b949e;font-size:12px;margin-top:4px">
+          Reduce gain on mid-forward (bright/harsh) files based on mid-to-bass energy ratio.
+          Warm/bass-forward files are unaffected.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>Custom Accent Dictionary</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Override stress positions for specific words. RUAccent checks this dictionary
+      before using its neural network &mdash; entries here take priority.
+      One word per line: <code>word: stressed_word</code> with <code>+</code> before the stressed vowel.
+      Lines starting with <code>#</code> are ignored.
+    </p>
+    <div class="form-group">
+      <textarea name="custom_accent_dict_text" rows="8"
+        style="width:100%;background:#161b22;color:#e1e4e8;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:13px;resize:vertical"
+        placeholder="молоко: молок+о&#10;хорошо: хорош+о&#10;# комментарий">{%- if config.custom_accent_dict -%}
+{%- for word, stressed in config.custom_accent_dict.items() -%}
+{{ word }}: {{ stressed }}
+{%- endfor -%}
+{%- endif -%}</textarea>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>Text Preprocessing</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Clean up gen_text before TTS to fix common issues: proper nouns mispronounced
+      due to capitalization, hanging intonation from ellipsis, missing terminal punctuation.
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label>Sentence case</label>
+        <label class="toggle-switch">
+          <input type="hidden" name="fix_sentence_case" value="0">
+          <input type="checkbox" name="fix_sentence_case" value="1"
+            {% if config.fix_gen_text.sentence_case %}checked{% endif %}>
+          <span class="toggle-slider"></span>
+        </label>
+        <p style="color:#8b949e;font-size:12px;margin-top:4px">
+          First letter of each sentence uppercase, rest lowercase.
+          Prevents proper noun mispronunciation.
+        </p>
+      </div>
+      <div class="form-group">
+        <label>Fix terminal punctuation</label>
+        <label class="toggle-switch">
+          <input type="hidden" name="fix_terminal_punct" value="0">
+          <input type="checkbox" name="fix_terminal_punct" value="1"
+            {% if config.fix_gen_text.terminal_punctuation %}checked{% endif %}>
+          <span class="toggle-slider"></span>
+        </label>
+        <p style="color:#8b949e;font-size:12px;margin-top:4px">
+          Replace trailing <code>...</code> with <code>.</code>,
+          remove trailing commas/dashes, add <code>.</code> if missing.
+        </p>
+      </div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>Audio Trimming</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Long reference audio is automatically trimmed to fit F5-TTS limits.
+      Silence detection finds sentence boundaries so words aren't cut mid-way.
+      Tweak these if your audio has unusual silence patterns.
+    </p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label>Max audio duration (ms)</label>
+        <input type="number" name="trim_max_ms" value="{{ config.trim_settings.max_ms }}" min="1000" max="60000" step="100">
+      </div>
+      <div class="form-group">
+        <label>Min silence length (ms)</label>
+        <input type="number" name="trim_min_silence_len" value="{{ config.trim_settings.min_silence_len }}" min="100" max="10000" step="100">
+      </div>
+      <div class="form-group">
+        <label>Silence threshold (dBFS)</label>
+        <input type="number" name="trim_silence_thresh" value="{{ config.trim_settings.silence_thresh }}" min="-100" max="0" step="5">
+      </div>
+      <div class="form-group">
+        <label>Keep silence (ms)</label>
+        <input type="number" name="trim_keep_silence" value="{{ config.trim_settings.keep_silence }}" min="0" max="5000" step="100">
+      </div>
+    </div>
+  </div>
+
+  <div class="config-section">
+    <h3>Voice Speed Overrides</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Per-character max speed limits. Useful when a voice drops words at high speed.
+      Leave empty for no limit. Affects both manual and dynamic speed.
+    </p>
+    <div id="voice-overrides">
+      {% for name, vo in config.voice_overrides.items() %}
+      <div class="map-row">
+        <input type="text" name="vo_name" value="{{ name }}" placeholder="Character name" class="core-input">
+        <span class="sep">→</span>
+        <input type="number" name="vo_max_speed" value="{{ vo.max_speed }}" min="1.0" max="3.0" step="0.1" style="width:100px" placeholder="max speed">
+        <button type="button" class="btn-remove" onclick="this.parentElement.remove()">×</button>
+      </div>
+      {% endfor %}
+    </div>
+    <button type="button" class="btn btn-secondary btn-sm add-row-btn" onclick="addVoRow()">+ Add Override</button>
+  </div>
+
+  <div class="config-section">
+    <h3>Voice Routing</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      SkyrimNet hardcodes some voices. Override them here without changing the client.
+    </p>
+    <div class="form-group">
+      <label>Narrator voice override</label>
+      <p style="color:#8b949e;font-size:13px;margin-bottom:8px">
+        SkyrimNet uses <code>dlc1seranavoice</code> for narration. Set this to any registered character
+        name (e.g. <code>malebrute</code>) to redirect all narration TTS to that voice.
+        Leave empty to use the original voice.
+      </p>
+      <input type="text" name="narration_voice_override"
+        value="{{ config.narration_voice_override }}"
+        placeholder="e.g. malebrute, femaleeventoned">
+    </div>
+  </div>
+
+  <div class="config-section">
     <h3>Player Voice Filter</h3>
     <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
       SkyrimNet sends TTS requests for <code>player voice</code> which isn't registered here.
@@ -91,6 +326,17 @@ function addMapRow() {
     <button type="button" class="btn-remove" onclick="this.parentElement.remove()">×</button>
   `;
   document.getElementById('emotion-map').appendChild(div);
+}
+function addVoRow() {
+  var div = document.createElement('div');
+  div.className = 'map-row';
+  div.innerHTML = `
+    <input type="text" name="vo_name" value="" placeholder="Character name">
+    <span class="sep">→</span>
+    <input type="number" name="vo_max_speed" value="" min="1.0" max="3.0" step="0.1" style="width:100px" placeholder="max speed">
+    <button type="button" class="btn-remove" onclick="this.parentElement.remove()">×</button>
+  `;
+  document.getElementById('voice-overrides').appendChild(div);
 }
 </script>
 {% endblock %}

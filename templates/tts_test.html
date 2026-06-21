@@ -42,10 +42,17 @@
   </div>
 
   <div class="form-group">
-    <label>NFE Steps <span style="color:#8b949e;font-weight:400;text-transform:none">— higher = better quality, slower. 64 default, 32 for speed</span></label>
+    <label>NFE Steps <span style="color:#8b949e;font-weight:400;text-transform:none">— higher = better quality, slower</span></label>
     <input type="range" name="nfe_step" id="nfe-slider" min="8" max="64" step="8"
-      value="{{ nfe_step }}" oninput="updateNfeLabel(this)">
+      value="{{ nfe_step }}" oninput="updateLabel(this, 'nfe-label')">
     <span id="nfe-label" style="font-size:13px;color:#8b949e;margin-left:8px">{{ nfe_step }}</span>
+  </div>
+
+  <div class="form-group">
+    <label>Speed <span style="color:#8b949e;font-weight:400;text-transform:none">— higher = faster, 0.3–2.0</span></label>
+    <input type="range" name="speed" id="speed-slider" min="0.3" max="2.0" step="0.1"
+      value="{{ speed }}" oninput="updateLabel(this, 'speed-label')">
+    <span id="speed-label" style="font-size:13px;color:#8b949e;margin-left:8px">{{ speed }}</span>
   </div>
 
   <div class="btn-group">
@@ -58,7 +65,7 @@
   <audio src="data:audio/wav;base64,{{ audio_data }}" controls autoplay preload="auto"></audio>
   <p style="margin-top:12px;color:#8b949e;font-size:13px">
     {% if used_seed is not none %}Seed: <code>{{ used_seed }}</code> · {% endif %}
-    NFE steps: <code>{{ nfe_step }}</code>
+    NFE steps: <code>{{ nfe_step }}</code> · Speed: <code>{{ speed }}</code>
   </p>
 </div>
 {% endif %}
@@ -76,8 +83,8 @@ function toggleSeedInput(checkbox) {
   input.disabled = checkbox.checked;
   if (checkbox.checked) input.value = '';
 }
-function updateNfeLabel(slider) {
-  document.getElementById('nfe-label').textContent = slider.value;
+function updateLabel(slider, labelId) {
+  document.getElementById(labelId).textContent = parseFloat(slider.value).toFixed(1);
 }
 </script>
 {% endblock %}

@@ -18,6 +18,8 @@ from fastapi.templating import Jinja2Templates
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("f5-tts-web")
 
+from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
+
 BASE_DIR = Path("/home/drynw/models/f5-tts")
 VOICES_DIR = BASE_DIR / "voices"
 CONFIG_PATH = BASE_DIR / "config.json"
@@ -52,11 +54,40 @@ def load_config() -> dict:
         "ignore_player_voice": True,
         "ignored_voice_patterns": ["player voice", "player_voice"],
         "cloned_voices_dir": "_cloned",
+        "trim_settings": {
+            "max_ms": 12000,
+            "min_silence_len": 1000,
+            "silence_thresh": -50,
+            "keep_silence": 500,
+        },
+        "default_nfe_step": 64,
+        "narration_voice_override": "",
+        "dynamic_speed": {
+            "enabled": False,
+            "min_rate": 1.0,
+            "min_rate_length": 3.0,
+            "max_rate": 2.0,
+            "max_rate_length": 15.0,
+        },
+        "voice_overrides": {},
+        "ref_normalization": {
+            "target_dbfs": DEFAULT_NORMALIZATION_TARGET,
+            "normalize_on_the_fly": DEFAULT_NORMALIZE_ON_FLY,
+            "spectral_penalty": DEFAULT_SPECTRAL_PENALTY,
+        },
+        "custom_accent_dict": {},
+        "fix_gen_text": {
+            "sentence_case": True,
+            "terminal_punctuation": True,
+        },
     }
     if CONFIG_PATH.exists():
         try:
             with open(CONFIG_PATH) as f:
-                return json.load(f)
+                cfg = json.load(f)
+            merged = default.copy()
+            merged.update(cfg)
+            return merged
         except Exception:
             pass
     return default
@@ -65,6 +96,28 @@ def load_config() -> dict:
 def save_config(cfg: dict):
     with open(CONFIG_PATH, "w") as f:
         json.dump(cfg, f, indent=2, ensure_ascii=False)
+
+
+def _get_trim_settings() -> dict:
+    """Read trim settings from config, falling back to defaults."""
+    ts = load_config().get("trim_settings", {})
+    return {
+        "max_ms": ts.get("max_ms", 12000),
+        "min_silence_len": ts.get("min_silence_len", 1000),
+        "silence_thresh": ts.get("silence_thresh", -50),
+        "keep_silence": ts.get("keep_silence", 500),
+    }
+
+
+def _normalize_audio_wrapper(audio_path: str):
+    """Normalize a single audio file per config settings."""
+    cfg = load_config()
+    norm = cfg.get("ref_normalization", {}) or {}
+    target = float(norm.get("target_dbfs", DEFAULT_NORMALIZATION_TARGET))
+    sp = bool(norm.get("spectral_penalty", DEFAULT_SPECTRAL_PENALTY))
+    msg = normalize_loudness(audio_path, target_dbfs=target, spectral_penalty=sp)
+    if msg:
+        logger.info("Normalized '%s': %s", audio_path, msg)
 
 
 def get_characters(type_filter: str = "all") -> list[dict]:
@@ -202,14 +255,20 @@ async def create_character(request: Request):
     char_dir.mkdir(parents=True)
     saved = 0
 
+    trim_notice = ""
     for emotion in emotions:
         audio_file = form.get(f"audio_{emotion}")
         if not audio_file or not hasattr(audio_file, "filename") or not audio_file.filename:
             continue
         ext = Path(audio_file.filename).suffix or ".wav"
         content = await audio_file.read()
-        with open(char_dir / f"{emotion}{ext}", "wb") as f:
+        audio_path = char_dir / f"{emotion}{ext}"
+        with open(audio_path, "wb") as f:
             f.write(content)
+        trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+        if trim_msg:
+            trim_notice += f"{emotion}: {trim_msg}\n"
+        _normalize_audio_wrapper(str(audio_path))
         ref_text = form.get(f"text_{emotion}", "").strip()
         (char_dir / f"{emotion}.txt").write_text(ref_text)
         saved += 1
@@ -222,6 +281,9 @@ async def create_character(request: Request):
                 "message": {"type": "error", "text": "No audio files uploaded."},
             },
         )
+
+    if trim_notice:
+        logger.info("Trim notice for '%s':\n%s", name, trim_notice.strip())
 
     threading.Thread(target=_reload_api, daemon=True).start()
     return RedirectResponse(url=f"/character/{name}", status_code=303)
@@ -280,9 +342,14 @@ async def edit_emotion_submit(request: Request, name: str, emotion: str):
                 old.unlink()
                 break
         ext = Path(audio_file.filename).suffix or ".wav"
+        audio_path = char_dir / f"{emotion}{ext}"
         content = await audio_file.read()
-        with open(char_dir / f"{emotion}{ext}", "wb") as f:
+        with open(audio_path, "wb") as f:
             f.write(content)
+        trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+        if trim_msg:
+            logger.info("Edit trim for '%s/%s': %s", name, emotion, trim_msg)
+        _normalize_audio_wrapper(str(audio_path))
 
     ref_text = form.get("text", "").strip()
     (char_dir / f"{emotion}.txt").write_text(ref_text)
@@ -339,9 +406,14 @@ async def add_emotion_submit(request: Request, name: str):
         )
 
     ext = Path(audio_file.filename).suffix or ".wav"
+    audio_path = char_dir / f"{emotion}{ext}"
     content = await audio_file.read()
-    with open(char_dir / f"{emotion}{ext}", "wb") as f:
+    with open(audio_path, "wb") as f:
         f.write(content)
+    trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+    if trim_msg:
+        logger.info("Add emotion trim for '%s/%s': %s", name, emotion, trim_msg)
+    _normalize_audio_wrapper(str(audio_path))
 
     ref_text = form.get("text", "").strip()
     (char_dir / f"{emotion}.txt").write_text(ref_text)
@@ -369,20 +441,78 @@ async def config_save(request: Request):
     }
 
     cores = form.getlist("map_core")
-    aliases_list = form.getlist("map_aliases")
-    emotion_map = {}
-    for core, aliases_str in zip(cores, aliases_list):
-        core = core.strip().lower()
-        if not core:
-            continue
-        aliases = [a.strip().lower() for a in aliases_str.split(",") if a.strip()]
-        if aliases:
-            emotion_map[core] = aliases
-    cfg["emotion_map"] = emotion_map
+    if cores and cores[0]:
+        aliases_list = form.getlist("map_aliases")
+        emotion_map = {}
+        for core, aliases_str in zip(cores, aliases_list):
+            core = core.strip().lower()
+            if not core:
+                continue
+            aliases = [a.strip().lower() for a in aliases_str.split(",") if a.strip()]
+            if aliases:
+                emotion_map[core] = aliases
+        cfg["emotion_map"] = emotion_map
 
     cfg["ignore_player_voice"] = form.get("ignore_player_voice") == "1"
     raw_patterns = form.get("ignored_voice_patterns", "").strip()
     cfg["ignored_voice_patterns"] = [p.strip() for p in raw_patterns.split(",") if p.strip()]
+
+    cfg["trim_settings"] = {
+        "max_ms": int(form.get("trim_max_ms", 12000)),
+        "min_silence_len": int(form.get("trim_min_silence_len", 1000)),
+        "silence_thresh": int(form.get("trim_silence_thresh", -50)),
+        "keep_silence": int(form.get("trim_keep_silence", 500)),
+    }
+
+    cfg["default_nfe_step"] = int(form.get("default_nfe_step", 64))
+    cfg["narration_voice_override"] = form.get("narration_voice_override", "").strip()
+    cfg["dynamic_speed"] = {
+        "enabled": form.get("dynamic_speed_enabled") == "1",
+        "min_rate": float(form.get("ds_min_rate", 1.0)),
+        "min_rate_length": float(form.get("ds_min_rate_length", 3.0)),
+        "max_rate": float(form.get("ds_max_rate", 1.4)),
+        "max_rate_length": float(form.get("ds_max_rate_length", 15.0)),
+    }
+    # Voice speed overrides
+    override_names = form.getlist("vo_name")
+    override_speeds = form.getlist("vo_max_speed")
+    voice_overrides = {}
+    for name, speed_str in zip(override_names, override_speeds):
+        name = name.strip().lower()
+        if not name:
+            continue
+        try:
+            ms = float(speed_str)
+            if ms > 0:
+                voice_overrides[name] = {"max_speed": ms}
+        except (ValueError, TypeError):
+            pass
+    cfg["voice_overrides"] = voice_overrides
+
+    cfg["ref_normalization"] = {
+        "target_dbfs": float(form.get("norm_target_dbfs", -28)),
+        "normalize_on_the_fly": form.get("normalize_on_the_fly") == "1",
+        "spectral_penalty": form.get("norm_spectral_penalty") == "1",
+    }
+
+    raw = form.get("custom_accent_dict_text", "").strip()
+    custom_accent = {}
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if ":" in line:
+            word, stressed = line.split(":", 1)
+            word = word.strip().lower()
+            stressed = stressed.strip()
+            if word and stressed:
+                custom_accent[word] = stressed
+    cfg["custom_accent_dict"] = custom_accent
+
+    cfg["fix_gen_text"] = {
+        "sentence_case": form.get("fix_sentence_case") == "1",
+        "terminal_punctuation": form.get("fix_terminal_punct") == "1",
+    }
 
     save_config(cfg)
     threading.Thread(target=_reload_api, daemon=True).start()
@@ -397,13 +527,15 @@ async def config_save(request: Request):
 
 @app.get("/tts-test", response_class=HTMLResponse)
 def tts_test_page(request: Request):
+    cfg = load_config()
     return templates.TemplateResponse(
         "tts_test.html", {
             "request": request, "characters": get_characters(),
-            "config": load_config(),
+            "config": cfg,
             "audio_data": None, "selected_voice": None,
             "gen_input": None, "selected_seed": None,
-            "nfe_step": 64, "message": None,
+            "nfe_step": cfg.get("default_nfe_step", 64),
+            "speed": 1.0, "message": None,
         },
     )
 
@@ -419,7 +551,9 @@ async def tts_test_submit(request: Request):
 
     user_seed = int(seed_raw) if seed_raw else None
     used_seed = random.randint(0, 2**31 - 1) if random_seed or user_seed is None else user_seed
-    nfe_step = int(nfe_step_raw) if nfe_step_raw else 64
+    nfe_step = int(nfe_step_raw) if nfe_step_raw else load_config().get("default_nfe_step", 64)
+    speed_raw = form.get("speed", "").strip()
+    speed = float(speed_raw) if speed_raw else 1.0
 
     if not voice or not gen_input:
         return templates.TemplateResponse(
@@ -429,7 +563,7 @@ async def tts_test_submit(request: Request):
                 "audio_data": None, "selected_voice": voice,
                 "gen_input": gen_input, "selected_seed": user_seed,
                 "random_seed": random_seed, "used_seed": None,
-                "nfe_step": nfe_step,
+                "nfe_step": nfe_step, "speed": speed,
                 "message": {"type": "error", "text": "Voice and input are required."},
             },
         )
@@ -441,6 +575,7 @@ async def tts_test_submit(request: Request):
         "response_format": "wav",
         "seed": used_seed,
         "nfe_step": nfe_step,
+        "speed": speed,
     }
 
     try:
@@ -457,7 +592,7 @@ async def tts_test_submit(request: Request):
                 "audio_data": None, "selected_voice": voice,
                 "gen_input": gen_input, "selected_seed": user_seed,
                 "random_seed": random_seed, "used_seed": None,
-                "nfe_step": nfe_step,
+                "nfe_step": nfe_step, "speed": speed,
                 "message": {"type": "error", "text": f"TTS request failed: {e}"},
             },
         )
@@ -469,7 +604,7 @@ async def tts_test_submit(request: Request):
             "audio_data": audio_b64, "selected_voice": voice,
             "gen_input": gen_input, "selected_seed": user_seed,
             "random_seed": random_seed, "used_seed": used_seed,
-            "nfe_step": nfe_step, "message": None,
+            "nfe_step": nfe_step, "speed": speed, "message": None,
         },
     )
 
