@@ -477,6 +477,7 @@ async def config_save(request: Request):
         "max_rate_length": float(form.get("ds_max_rate_length", 15.0)),
     }
     tails_raw = form.get("semantic_decorative_tails", "").strip()
+    weak_start_words_raw = form.get("semantic_weak_start_words", "").strip()
     cfg["semantic_chunking"] = {
         "enabled": form.get("semantic_enabled") == "1",
         "target_total_sec": float(form.get("semantic_target_total_sec", 26.0)),
@@ -487,11 +488,21 @@ async def config_save(request: Request):
         "frame_margin": float(form.get("semantic_frame_margin", 1.10)),
         "ref_guard_enabled": form.get("semantic_ref_guard_enabled") == "1",
         "ref_guard_silence_ms": int(form.get("semantic_ref_guard_silence_ms", 300)),
+        "ref_guard_speed_scale_ms": int(form.get("semantic_ref_guard_speed_scale_ms", 500)),
+        "ref_guard_max_silence_ms": int(form.get("semantic_ref_guard_max_silence_ms", 900)),
         "ref_tail_quarantine_enabled": form.get("semantic_ref_tail_quarantine_enabled") == "1",
         "ref_tail_max_units": int(form.get("semantic_ref_tail_max_units", 40)),
         "ref_tail_min_silence_ms": int(form.get("semantic_ref_tail_min_silence_ms", 150)),
         "ref_tail_keep_silence_ms": int(form.get("semantic_ref_tail_keep_silence_ms", 200)),
         "ref_tail_max_removed_ms": int(form.get("semantic_ref_tail_max_removed_ms", 4500)),
+        "ref_tail_clause_quarantine_enabled": form.get("semantic_ref_tail_clause_quarantine_enabled") == "1",
+        "ref_tail_clause_min_speed": float(form.get("semantic_ref_tail_clause_min_speed", 1.05)),
+        "ref_tail_clause_max_units": int(form.get("semantic_ref_tail_clause_max_units", 36)),
+        "ref_tail_clause_min_remaining_units": int(form.get("semantic_ref_tail_clause_min_remaining_units", 35)),
+        "ref_tail_clause_max_removed_ms": int(form.get("semantic_ref_tail_clause_max_removed_ms", 5500)),
+        "weak_start_merge_enabled": form.get("semantic_weak_start_merge_enabled") == "1",
+        "weak_start_merge_slack_sec": float(form.get("semantic_weak_start_merge_slack_sec", 0.35)),
+        "weak_start_words": [w.strip().lower() for w in re.split(r"[,\n]", weak_start_words_raw) if w.strip()],
         "generated_trim": {
             "enabled": form.get("semantic_generated_trim_enabled") == "1",
             "leading_keep_ms": int(form.get("semantic_generated_trim_leading_keep_ms", 300)),

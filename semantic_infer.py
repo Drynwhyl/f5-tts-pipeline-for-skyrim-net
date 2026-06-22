@@ -33,11 +33,33 @@ DEFAULT_SEMANTIC_CHUNKING = {
     "frame_margin": 1.10,
     "ref_guard_enabled": True,
     "ref_guard_silence_ms": 300,
+    "ref_guard_speed_scale_ms": 500,
+    "ref_guard_max_silence_ms": 900,
     "ref_tail_quarantine_enabled": True,
     "ref_tail_max_units": 40,
     "ref_tail_min_silence_ms": 150,
     "ref_tail_keep_silence_ms": 200,
     "ref_tail_max_removed_ms": 4500,
+    "ref_tail_clause_quarantine_enabled": True,
+    "ref_tail_clause_min_speed": 1.05,
+    "ref_tail_clause_max_units": 36,
+    "ref_tail_clause_min_remaining_units": 35,
+    "ref_tail_clause_max_removed_ms": 5500,
+    "weak_start_merge_enabled": True,
+    "weak_start_merge_slack_sec": 0.35,
+    "weak_start_words": [
+        "хотя",
+        "что",
+        "чтобы",
+        "если",
+        "когда",
+        "пока",
+        "потому",
+        "который",
+        "которая",
+        "которое",
+        "которые",
+    ],
     "generated_trim": {
         "enabled": True,
         "leading_keep_ms": 300,
@@ -123,7 +145,7 @@ def build_chunk_plan(text: str, ref_text: str, ref_duration_sec: float, config: 
     ref_units = max(_speech_units(ref_text), 1.0)
     guard_sec = 0.0
     if cfg.get("ref_guard_enabled", True):
-        guard_sec = max(0, int(cfg.get("ref_guard_silence_ms", 300))) / 1000.0
+        guard_sec = max(0, int(cfg.get("effective_ref_guard_silence_ms", cfg.get("ref_guard_silence_ms", 300)))) / 1000.0
     ref_speech_duration_sec = max(ref_duration_sec - guard_sec, 0.1)
     ref_units_per_sec = ref_units / ref_speech_duration_sec
 
@@ -165,7 +187,8 @@ def build_chunk_plan(text: str, ref_text: str, ref_duration_sec: float, config: 
         "max_gen_budget_sec": max_gen_budget_sec,
         "frame_margin": float(cfg.get("frame_margin", 1.0)),
         "ref_guard_enabled": cfg.get("ref_guard_enabled", True),
-        "ref_guard_silence_ms": int(cfg.get("ref_guard_silence_ms", 300)),
+        "base_ref_guard_silence_ms": int(cfg.get("ref_guard_silence_ms", 300)),
+        "ref_guard_silence_ms": int(cfg.get("effective_ref_guard_silence_ms", cfg.get("ref_guard_silence_ms", 300))),
         "generated_trim": cfg.get("generated_trim", {}),
         "chunks": [p.__dict__ for p in plans],
     }
@@ -360,7 +383,8 @@ def _split_text(text: str, ref_units_per_sec: float, target_sec: float, hard_sec
         while start < len(text) and text[start].isspace():
             start += 1
 
-    return _merge_short_chunks(chunks, ref_units_per_sec, hard_sec, cfg)
+    chunks = _merge_short_chunks(chunks, ref_units_per_sec, hard_sec, cfg)
+    return _merge_weak_start_chunks(chunks, ref_units_per_sec, hard_sec, cfg)
 
 
 def _choose_boundary(text: str, start: int, ref_units_per_sec: float, target_sec: float, hard_sec: float, cfg: dict[str, Any]):
@@ -502,6 +526,29 @@ def _merge_short_chunks(chunks, ref_units_per_sec: float, hard_sec: float, cfg: 
         joined_est = _estimate_text(joined, ref_units_per_sec, cfg)["budget_sec"]
         if estimate < min_sec and joined_est <= hard_sec:
             merged[-1] = (joined, "merged_short_chunk")
+        else:
+            merged.append((chunk, reason))
+    return merged
+
+
+def _merge_weak_start_chunks(chunks, ref_units_per_sec: float, hard_sec: float, cfg: dict[str, Any]):
+    if len(chunks) < 2 or not cfg.get("weak_start_merge_enabled", True):
+        return chunks
+    weak_words = {str(w).replace("+", "").lower() for w in cfg.get("weak_start_words", [])}
+    slack = max(0.0, float(cfg.get("weak_start_merge_slack_sec", 0.35)))
+    merged = []
+    for chunk, reason in chunks:
+        if not merged:
+            merged.append((chunk, reason))
+            continue
+
+        first_word_match = re.search(r"[A-Za-zА-Яа-яЁё+]+", chunk)
+        first_word = first_word_match.group(0).replace("+", "").lower() if first_word_match else ""
+        prev = merged[-1][0]
+        joined = (prev + " " + chunk).strip()
+        joined_budget = _estimate_text(joined, ref_units_per_sec, cfg)["budget_sec"]
+        if first_word in weak_words and joined_budget <= hard_sec + slack:
+            merged[-1] = (joined, "merged_weak_start")
         else:
             merged.append((chunk, reason))
     return merged

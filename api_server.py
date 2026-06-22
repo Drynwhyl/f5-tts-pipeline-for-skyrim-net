@@ -555,13 +555,13 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optiona
         Path(save_ref_text_to).write_text(ref_text_processed)
         logger.info("Saved auto-transcribed ref_text to %s", save_ref_text_to)
 
-    semantic_cfg = merge_semantic_config((app_config or {}).get("semantic_chunking", {}))
+    semantic_cfg = _runtime_semantic_config((app_config or {}).get("semantic_chunking", {}), speed)
     use_semantic = semantic_cfg.get("enabled", True)
     cleanup_paths = []
 
     if use_semantic and ref_audio_processed != SILENCE_SENTINEL:
         ref_audio_processed, ref_text_processed, quarantine_tmp = _maybe_quarantine_ref_tail(
-            ref_audio_processed, ref_text_processed, semantic_cfg
+            ref_audio_processed, ref_text_processed, semantic_cfg, speed
         )
         if quarantine_tmp:
             cleanup_paths.append(quarantine_tmp)
@@ -581,7 +581,7 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optiona
         logger.info("Ref atempo speed=%.1f applied", speed)
 
     if use_semantic and semantic_cfg.get("ref_guard_enabled", True) and ref_audio_processed != SILENCE_SENTINEL:
-        guard_ms = int(semantic_cfg.get("ref_guard_silence_ms", 300))
+        guard_ms = int(semantic_cfg.get("effective_ref_guard_silence_ms", semantic_cfg.get("ref_guard_silence_ms", 300)))
         if guard_ms > 0:
             ref_audio_processed = _append_ref_guard_silence(ref_audio_processed, guard_ms)
             cleanup_paths.append(ref_audio_processed)
@@ -628,7 +628,21 @@ def _append_ref_guard_silence(audio_path: str, guard_ms: int) -> str:
     return out_path
 
 
-def _maybe_quarantine_ref_tail(audio_path: str, ref_text: str, semantic_cfg: dict) -> tuple[str, str, Optional[str]]:
+def _runtime_semantic_config(config: dict, speed: float) -> dict:
+    cfg = merge_semantic_config(config)
+    cfg["effective_ref_guard_silence_ms"] = _effective_ref_guard_ms(cfg, speed)
+    return cfg
+
+
+def _effective_ref_guard_ms(semantic_cfg: dict, speed: float) -> int:
+    base_ms = max(0, int(semantic_cfg.get("ref_guard_silence_ms", 300)))
+    scale_ms = max(0, int(semantic_cfg.get("ref_guard_speed_scale_ms", 500)))
+    max_ms = max(base_ms, int(semantic_cfg.get("ref_guard_max_silence_ms", 900)))
+    guard_ms = base_ms + int(max(0.0, float(speed) - 1.0) * scale_ms)
+    return min(max_ms, guard_ms)
+
+
+def _maybe_quarantine_ref_tail(audio_path: str, ref_text: str, semantic_cfg: dict, speed: float = 1.0) -> tuple[str, str, Optional[str]]:
     if not semantic_cfg.get("ref_tail_quarantine_enabled", True):
         return audio_path, ref_text, None
 
@@ -677,7 +691,14 @@ def _maybe_quarantine_ref_tail(audio_path: str, ref_text: str, semantic_cfg: dic
             removed_ms += step_removed
             removed_sentences.append(last_sentence)
 
-        if not removed_sentences:
+        clause_text = None
+        clause_removed_ms = 0
+        if _should_quarantine_ref_tail_clause(semantic_cfg, speed):
+            aseg, sentences, clause_text, clause_removed_ms = _maybe_quarantine_final_clause(
+                aseg, sentences, semantic_cfg
+            )
+
+        if not removed_sentences and not clause_text:
             return audio_path, ref_text, None
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
@@ -687,8 +708,8 @@ def _maybe_quarantine_ref_tail(audio_path: str, ref_text: str, semantic_cfg: dic
         if new_ref_text and not new_ref_text.endswith(" "):
             new_ref_text += " "
         logger.info(
-            "Ref tail quarantined: removed %d final sentence(s) %s and %.0fms audio tail",
-            len(removed_sentences), removed_sentences, removed_ms,
+            "Ref tail quarantined: removed %d final sentence(s) %s, clause=%s, %.0fms sentence tail, %.0fms clause tail",
+            len(removed_sentences), removed_sentences, clause_text, removed_ms, clause_removed_ms,
         )
         return out_path, new_ref_text, out_path
     except Exception as e:
@@ -696,8 +717,99 @@ def _maybe_quarantine_ref_tail(audio_path: str, ref_text: str, semantic_cfg: dic
         return audio_path, ref_text, None
 
 
+def _should_quarantine_ref_tail_clause(semantic_cfg: dict, speed: float) -> bool:
+    if not semantic_cfg.get("ref_tail_clause_quarantine_enabled", True):
+        return False
+    min_speed = float(semantic_cfg.get("ref_tail_clause_min_speed", 1.05))
+    return float(speed) >= min_speed
+
+
+def _maybe_quarantine_final_clause(
+    audio: AudioSegment,
+    sentences: list[str],
+    semantic_cfg: dict,
+) -> tuple[AudioSegment, list[str], Optional[str], int]:
+    if not sentences:
+        return audio, sentences, None, 0
+
+    last_sentence = sentences[-1].strip()
+    delimiter_matches = list(re.finditer(r"[,;:—–]", last_sentence))
+    if not delimiter_matches:
+        delimiter_matches = list(re.finditer(r"\s-\s", last_sentence))
+    if not delimiter_matches:
+        return audio, sentences, None, 0
+
+    delimiter = delimiter_matches[-1]
+    prefix = last_sentence[: delimiter.start()].strip()
+    clause = last_sentence[delimiter.end() :].strip()
+    if not prefix or not clause:
+        return audio, sentences, None, 0
+
+    clause_units = _speech_units_for_tail(clause)
+    prefix_units = _speech_units_for_tail(prefix)
+    max_clause_units = int(semantic_cfg.get("ref_tail_clause_max_units", 36))
+    min_remaining_units = int(semantic_cfg.get("ref_tail_clause_min_remaining_units", 35))
+    if clause_units <= 0 or clause_units > max_clause_units or prefix_units < min_remaining_units:
+        return audio, sentences, None, 0
+
+    ranges = silence.detect_nonsilent(
+        audio,
+        min_silence_len=int(semantic_cfg.get("ref_tail_min_silence_ms", 150)),
+        silence_thresh=-50,
+        seek_step=10,
+    )
+    if len(ranges) < 2:
+        return audio, sentences, None, 0
+
+    all_text = " ".join(sentences)
+    prefix_text = " ".join(sentences[:-1] + [prefix])
+    total_units = max(_speech_units_for_tail(all_text), 1)
+    prefix_ratio = min(max(_speech_units_for_tail(prefix_text) / total_units, 0.05), 0.95)
+    target_ms = ranges[0][0] + (ranges[-1][1] - ranges[0][0]) * prefix_ratio
+
+    min_gap_ms = int(semantic_cfg.get("ref_tail_min_silence_ms", 150))
+    gaps = [
+        (ranges[i][1], ranges[i + 1][0])
+        for i in range(len(ranges) - 1)
+        if ranges[i + 1][0] - ranges[i][1] >= min_gap_ms
+    ]
+    if not gaps:
+        return audio, sentences, None, 0
+
+    gap_start, _ = min(gaps, key=lambda gap: abs(((gap[0] + gap[1]) / 2) - target_ms))
+    keep_ms = int(semantic_cfg.get("ref_tail_keep_silence_ms", 200))
+    cut_at = min(len(audio), gap_start + max(0, keep_ms))
+    removed_ms = len(audio) - cut_at
+    max_removed_ms = int(semantic_cfg.get("ref_tail_clause_max_removed_ms", 5500))
+    if cut_at < 1000 or removed_ms < 250 or removed_ms > max_removed_ms:
+        return audio, sentences, None, 0
+
+    new_sentences = sentences[:-1] + [_ensure_sentence_terminal(prefix)]
+    return audio[:cut_at], new_sentences, clause, removed_ms
+
+
+def _ensure_sentence_terminal(text: str) -> str:
+    text = re.sub(r"[\s,;:—–-]+$", "", text.strip())
+    if text and not re.search(r"[.!?]$", text):
+        text += "."
+    return text
+
+
 def _split_ref_sentences(text: str) -> list[str]:
-    return [s.strip() for s in re.findall(r".+?(?:[.!?]+|$)(?:\s+|$)", text.strip()) if s.strip()]
+    sentences = [s.strip() for s in re.findall(r".+?(?:[.!?]+|$)(?:\s+|$)", text.strip()) if s.strip()]
+    if len(sentences) < 2:
+        return sentences
+
+    last = sentences[-1]
+    match = re.match(r"^(.+[,;:—–])\s*([^,;:—–.!?]+[.!?])$", last)
+    if not match:
+        return sentences
+
+    prefix = _ensure_sentence_terminal(match.group(1))
+    tail = match.group(2).strip()
+    if prefix and tail and _speech_units_for_tail(tail) <= 40:
+        return sentences[:-1] + [prefix, tail]
+    return sentences
 
 
 def _speech_units_for_tail(text: str) -> int:
@@ -780,11 +892,11 @@ def preview_chunks(req: TTSRequest):
     )
     ref_text_processed = _apply_stress(ref_text_processed)
 
-    semantic_cfg = merge_semantic_config((app_config or {}).get("semantic_chunking", {}))
+    semantic_cfg = _runtime_semantic_config((app_config or {}).get("semantic_chunking", {}), speed)
     preview_cleanup = None
     if semantic_cfg.get("enabled", True) and ref_audio_processed != SILENCE_SENTINEL:
         ref_audio_processed, ref_text_processed, preview_cleanup = _maybe_quarantine_ref_tail(
-            ref_audio_processed, ref_text_processed, semantic_cfg
+            ref_audio_processed, ref_text_processed, semantic_cfg, speed
         )
     if ref_audio_processed == SILENCE_SENTINEL:
         ref_duration = 1.0
@@ -794,7 +906,7 @@ def preview_chunks(req: TTSRequest):
         if speed > 1.0:
             ref_duration = ref_duration / speed
         if semantic_cfg.get("enabled", True) and semantic_cfg.get("ref_guard_enabled", True):
-            ref_duration += max(0, int(semantic_cfg.get("ref_guard_silence_ms", 300))) / 1000.0
+            ref_duration += max(0, int(semantic_cfg.get("effective_ref_guard_silence_ms", semantic_cfg.get("ref_guard_silence_ms", 300)))) / 1000.0
 
     plan = build_chunk_plan(gen_text, ref_text_processed, ref_duration, semantic_cfg)
     if preview_cleanup:

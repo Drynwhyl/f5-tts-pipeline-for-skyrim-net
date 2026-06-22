@@ -167,6 +167,14 @@
         <input type="number" name="semantic_ref_guard_silence_ms" value="{{ config.semantic_chunking.ref_guard_silence_ms }}" min="0" max="2000" step="50">
       </div>
       <div class="form-group">
+        <label>Guard speed scale (ms)</label>
+        <input type="number" name="semantic_ref_guard_speed_scale_ms" value="{{ config.semantic_chunking.ref_guard_speed_scale_ms }}" min="0" max="2000" step="50">
+      </div>
+      <div class="form-group">
+        <label>Guard max (ms)</label>
+        <input type="number" name="semantic_ref_guard_max_silence_ms" value="{{ config.semantic_chunking.ref_guard_max_silence_ms }}" min="0" max="3000" step="50">
+      </div>
+      <div class="form-group">
         <label class="checkbox-label">
           <input type="checkbox" name="semantic_ref_guard_enabled" value="1"
             {% if config.semantic_chunking.ref_guard_enabled %}checked{% endif %}>
@@ -195,6 +203,40 @@
             {% if config.semantic_chunking.ref_tail_quarantine_enabled %}checked{% endif %}>
           Quarantine short ref tail
         </label>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="semantic_ref_tail_clause_quarantine_enabled" value="1"
+            {% if config.semantic_chunking.ref_tail_clause_quarantine_enabled %}checked{% endif %}>
+          Quarantine ref tail clause
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Clause min speed</label>
+        <input type="number" name="semantic_ref_tail_clause_min_speed" value="{{ config.semantic_chunking.ref_tail_clause_min_speed }}" min="1" max="3" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Clause max units</label>
+        <input type="number" name="semantic_ref_tail_clause_max_units" value="{{ config.semantic_chunking.ref_tail_clause_max_units }}" min="0" max="80" step="1">
+      </div>
+      <div class="form-group">
+        <label>Clause min remaining</label>
+        <input type="number" name="semantic_ref_tail_clause_min_remaining_units" value="{{ config.semantic_chunking.ref_tail_clause_min_remaining_units }}" min="0" max="120" step="1">
+      </div>
+      <div class="form-group">
+        <label>Clause max removed (ms)</label>
+        <input type="number" name="semantic_ref_tail_clause_max_removed_ms" value="{{ config.semantic_chunking.ref_tail_clause_max_removed_ms }}" min="0" max="10000" step="250">
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="semantic_weak_start_merge_enabled" value="1"
+            {% if config.semantic_chunking.weak_start_merge_enabled %}checked{% endif %}>
+          Merge weak chunk starts
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Weak start slack (s)</label>
+        <input type="number" name="semantic_weak_start_merge_slack_sec" value="{{ config.semantic_chunking.weak_start_merge_slack_sec }}" min="0" max="2" step="0.05">
       </div>
       <div class="form-group">
         <label class="checkbox-label">
@@ -269,6 +311,11 @@
       <label>Decorative tails</label>
       <textarea name="semantic_decorative_tails" rows="3"
         style="width:100%;background:#161b22;color:#e1e4e8;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:13px;resize:vertical">{{ config.semantic_chunking.comma_softening.decorative_tails | join(', ') }}</textarea>
+    </div>
+    <div class="form-group">
+      <label>Weak start words</label>
+      <textarea name="semantic_weak_start_words" rows="3"
+        style="width:100%;background:#161b22;color:#e1e4e8;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:13px;resize:vertical">{{ config.semantic_chunking.weak_start_words | join(', ') }}</textarea>
     </div>
   </div>
 
