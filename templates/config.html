@@ -125,6 +125,131 @@
   </div>
 
   <div class="config-section">
+    <h3>Semantic Chunking</h3>
+    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
+      Plans natural breath points for long Russian phrases and reserves extra frame budget for punctuation pauses.
+      Single F5-TTS generation is treated as <code>ref audio + generated audio</code>.
+    </p>
+    <div class="form-group">
+      <label class="checkbox-label">
+        <input type="checkbox" name="semantic_enabled" value="1"
+          {% if config.semantic_chunking.enabled %}checked{% endif %}>
+        Enable semantic chunking
+      </label>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px">
+      <div class="form-group">
+        <label>Target total (s)</label>
+        <input type="number" name="semantic_target_total_sec" value="{{ config.semantic_chunking.target_total_sec }}" min="10" max="30" step="0.5">
+      </div>
+      <div class="form-group">
+        <label>Hard total (s)</label>
+        <input type="number" name="semantic_hard_total_sec" value="{{ config.semantic_chunking.hard_total_sec }}" min="10" max="30" step="0.5">
+      </div>
+      <div class="form-group">
+        <label>Max gen budget (s)</label>
+        <input type="number" name="semantic_max_gen_budget_sec" value="{{ config.semantic_chunking.max_gen_budget_sec }}" min="3" max="20" step="0.5">
+      </div>
+      <div class="form-group">
+        <label>Min chunk (s)</label>
+        <input type="number" name="semantic_min_chunk_sec" value="{{ config.semantic_chunking.min_chunk_sec }}" min="0.5" max="5" step="0.1">
+      </div>
+      <div class="form-group">
+        <label>Duration margin</label>
+        <input type="number" name="semantic_duration_margin" value="{{ config.semantic_chunking.duration_margin }}" min="1.0" max="1.6" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Ref guard silence (ms)</label>
+        <input type="number" name="semantic_ref_guard_silence_ms" value="{{ config.semantic_chunking.ref_guard_silence_ms }}" min="0" max="2000" step="50">
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="semantic_ref_guard_enabled" value="1"
+            {% if config.semantic_chunking.ref_guard_enabled %}checked{% endif %}>
+          Append ref guard silence
+        </label>
+      </div>
+      <div class="form-group">
+        <label>Tail max units</label>
+        <input type="number" name="semantic_ref_tail_max_units" value="{{ config.semantic_chunking.ref_tail_max_units }}" min="0" max="60" step="1">
+      </div>
+      <div class="form-group">
+        <label>Tail silence (ms)</label>
+        <input type="number" name="semantic_ref_tail_min_silence_ms" value="{{ config.semantic_chunking.ref_tail_min_silence_ms }}" min="50" max="1000" step="50">
+      </div>
+      <div class="form-group">
+        <label>Tail keep silence (ms)</label>
+        <input type="number" name="semantic_ref_tail_keep_silence_ms" value="{{ config.semantic_chunking.ref_tail_keep_silence_ms }}" min="0" max="1000" step="50">
+      </div>
+      <div class="form-group">
+        <label>Tail max removed (ms)</label>
+        <input type="number" name="semantic_ref_tail_max_removed_ms" value="{{ config.semantic_chunking.ref_tail_max_removed_ms }}" min="0" max="8000" step="250">
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="semantic_ref_tail_quarantine_enabled" value="1"
+            {% if config.semantic_chunking.ref_tail_quarantine_enabled %}checked{% endif %}>
+          Quarantine short ref tail
+        </label>
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px">
+      <div class="form-group">
+        <label>Comma pause (s)</label>
+        <input type="number" name="semantic_punct_comma" value="{{ config.semantic_chunking.punctuation.comma }}" min="0" max="1" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Sentence pause (s)</label>
+        <input type="number" name="semantic_punct_sentence" value="{{ config.semantic_chunking.punctuation.sentence }}" min="0" max="1.5" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Ellipsis pause (s)</label>
+        <input type="number" name="semantic_punct_ellipsis" value="{{ config.semantic_chunking.punctuation.ellipsis }}" min="0" max="2" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Semicolon pause (s)</label>
+        <input type="number" name="semantic_punct_semicolon" value="{{ config.semantic_chunking.punctuation.semicolon }}" min="0" max="1.5" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Colon pause (s)</label>
+        <input type="number" name="semantic_punct_colon" value="{{ config.semantic_chunking.punctuation.colon }}" min="0" max="1.5" step="0.05">
+      </div>
+      <div class="form-group">
+        <label>Dash pause (s)</label>
+        <input type="number" name="semantic_punct_dash" value="{{ config.semantic_chunking.punctuation.dash }}" min="0" max="1.5" step="0.05">
+      </div>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="comma_softening_enabled" value="1"
+            {% if config.semantic_chunking.comma_softening.enabled %}checked{% endif %}>
+          Soften selected commas
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="comma_softening_vocative" value="1"
+            {% if config.semantic_chunking.comma_softening.vocative_enabled %}checked{% endif %}>
+          Vocative starts
+        </label>
+      </div>
+      <div class="form-group">
+        <label class="checkbox-label">
+          <input type="checkbox" name="comma_softening_tail" value="1"
+            {% if config.semantic_chunking.comma_softening.decorative_tail_enabled %}checked{% endif %}>
+          Decorative tails
+        </label>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>Decorative tails</label>
+      <textarea name="semantic_decorative_tails" rows="3"
+        style="width:100%;background:#161b22;color:#e1e4e8;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:13px;resize:vertical">{{ config.semantic_chunking.comma_softening.decorative_tails | join(', ') }}</textarea>
+    </div>
+  </div>
+
+  <div class="config-section">
     <h3>Reference Audio Normalization</h3>
     <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
       F5-TTS copies the loudness of the reference audio. If some refs are loud and

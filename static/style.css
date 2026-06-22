@@ -131,7 +131,7 @@ body {
   text-transform: uppercase;
   letter-spacing: .05em;
 }
-input[type="text"], input[type="url"], textarea, select {
+input[type="text"], input[type="url"], input[type="number"], textarea, select {
   width: 100%;
   padding: 8px 12px;
   background: #0d1117;
@@ -243,6 +243,33 @@ input[type="file"] { font-size: 14px; color: #8b949e; }
   text-align: center;
 }
 .preview-result audio { width: 100%; max-width: 500px; }
+.chunk-preview {
+  margin-top: 20px;
+  background: #161b22;
+  border: 1px solid #30363d;
+  border-radius: 8px;
+  padding: 20px;
+}
+.chunk-preview h3 { font-size: 16px; margin-bottom: 10px; }
+.chunk-preview p { color: #8b949e; font-size: 13px; margin-bottom: 10px; }
+.chunk-table-wrap { overflow-x: auto; }
+.chunk-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.chunk-table th, .chunk-table td {
+  border: 1px solid #30363d;
+  padding: 8px;
+  vertical-align: top;
+}
+.chunk-table th {
+  color: #8b949e;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.chunk-table td { color: #c9d1d9; }
 
 /* Empty state */
 .empty-state {

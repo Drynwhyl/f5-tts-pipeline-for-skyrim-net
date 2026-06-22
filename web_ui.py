@@ -19,6 +19,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("f5-tts-web")
 
 from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
+from semantic_infer import DEFAULT_SEMANTIC_CHUNKING, merge_semantic_config
 
 BASE_DIR = Path("/home/drynw/models/f5-tts")
 VOICES_DIR = BASE_DIR / "voices"
@@ -80,6 +81,7 @@ def load_config() -> dict:
             "sentence_case": True,
             "terminal_punctuation": True,
         },
+        "semantic_chunking": DEFAULT_SEMANTIC_CHUNKING,
     }
     if CONFIG_PATH.exists():
         try:
@@ -87,6 +89,7 @@ def load_config() -> dict:
                 cfg = json.load(f)
             merged = default.copy()
             merged.update(cfg)
+            merged["semantic_chunking"] = merge_semantic_config(cfg.get("semantic_chunking", {}))
             return merged
         except Exception:
             pass
@@ -473,6 +476,36 @@ async def config_save(request: Request):
         "max_rate": float(form.get("ds_max_rate", 1.4)),
         "max_rate_length": float(form.get("ds_max_rate_length", 15.0)),
     }
+    tails_raw = form.get("semantic_decorative_tails", "").strip()
+    cfg["semantic_chunking"] = {
+        "enabled": form.get("semantic_enabled") == "1",
+        "target_total_sec": float(form.get("semantic_target_total_sec", 26.0)),
+        "hard_total_sec": float(form.get("semantic_hard_total_sec", 29.0)),
+        "max_gen_budget_sec": float(form.get("semantic_max_gen_budget_sec", 10.0)),
+        "min_chunk_sec": float(form.get("semantic_min_chunk_sec", 1.4)),
+        "duration_margin": float(form.get("semantic_duration_margin", 1.15)),
+        "ref_guard_enabled": form.get("semantic_ref_guard_enabled") == "1",
+        "ref_guard_silence_ms": int(form.get("semantic_ref_guard_silence_ms", 700)),
+        "ref_tail_quarantine_enabled": form.get("semantic_ref_tail_quarantine_enabled") == "1",
+        "ref_tail_max_units": int(form.get("semantic_ref_tail_max_units", 40)),
+        "ref_tail_min_silence_ms": int(form.get("semantic_ref_tail_min_silence_ms", 150)),
+        "ref_tail_keep_silence_ms": int(form.get("semantic_ref_tail_keep_silence_ms", 200)),
+        "ref_tail_max_removed_ms": int(form.get("semantic_ref_tail_max_removed_ms", 4500)),
+        "punctuation": {
+            "comma": float(form.get("semantic_punct_comma", 0.20)),
+            "semicolon": float(form.get("semantic_punct_semicolon", 0.30)),
+            "colon": float(form.get("semantic_punct_colon", 0.30)),
+            "dash": float(form.get("semantic_punct_dash", 0.22)),
+            "sentence": float(form.get("semantic_punct_sentence", 0.40)),
+            "ellipsis": float(form.get("semantic_punct_ellipsis", 0.55)),
+        },
+        "comma_softening": {
+            "enabled": form.get("comma_softening_enabled") == "1",
+            "vocative_enabled": form.get("comma_softening_vocative") == "1",
+            "decorative_tail_enabled": form.get("comma_softening_tail") == "1",
+            "decorative_tails": [t.strip().lower() for t in re.split(r"[,\n]", tails_raw) if t.strip()],
+        },
+    }
     # Voice speed overrides
     override_names = form.getlist("vo_name")
     override_speeds = form.getlist("vo_max_speed")
@@ -535,7 +568,7 @@ def tts_test_page(request: Request):
             "audio_data": None, "selected_voice": None,
             "gen_input": None, "selected_seed": None,
             "nfe_step": cfg.get("default_nfe_step", 64),
-            "speed": 1.0, "message": None,
+            "speed": 1.0, "message": None, "chunk_plan": None,
         },
     )
 
@@ -564,6 +597,7 @@ async def tts_test_submit(request: Request):
                 "gen_input": gen_input, "selected_seed": user_seed,
                 "random_seed": random_seed, "used_seed": None,
                 "nfe_step": nfe_step, "speed": speed,
+                "chunk_plan": None,
                 "message": {"type": "error", "text": "Voice and input are required."},
             },
         )
@@ -578,8 +612,17 @@ async def tts_test_submit(request: Request):
         "speed": speed,
     }
 
+    chunk_plan = None
+    preview_error = None
     try:
         async with httpx.AsyncClient(timeout=60) as client:
+            try:
+                preview = await client.post(f"{API_URL}/v1/audio/chunks/preview", json=body)
+                preview.raise_for_status()
+                chunk_plan = preview.json()
+            except Exception as e:
+                preview_error = f"Chunk preview failed: {e}"
+                logger.warning(preview_error)
             resp = await client.post(f"{API_URL}/v1/audio/speech", json=body)
             resp.raise_for_status()
             audio_b64 = base64.b64encode(resp.content).decode()
@@ -593,6 +636,7 @@ async def tts_test_submit(request: Request):
                 "gen_input": gen_input, "selected_seed": user_seed,
                 "random_seed": random_seed, "used_seed": None,
                 "nfe_step": nfe_step, "speed": speed,
+                "chunk_plan": chunk_plan,
                 "message": {"type": "error", "text": f"TTS request failed: {e}"},
             },
         )
@@ -604,7 +648,8 @@ async def tts_test_submit(request: Request):
             "audio_data": audio_b64, "selected_voice": voice,
             "gen_input": gen_input, "selected_seed": user_seed,
             "random_seed": random_seed, "used_seed": used_seed,
-            "nfe_step": nfe_step, "speed": speed, "message": None,
+            "nfe_step": nfe_step, "speed": speed, "chunk_plan": chunk_plan,
+            "message": {"type": "error", "text": preview_error} if preview_error else None,
         },
     )
 

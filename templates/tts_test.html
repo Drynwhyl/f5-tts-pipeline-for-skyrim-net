@@ -70,6 +70,54 @@
 </div>
 {% endif %}
 
+{% if chunk_plan %}
+<div class="chunk-preview">
+  <h3>Chunk Plan</h3>
+  <p>
+    Ref: <code>{{ '%.2f'|format(chunk_plan.ref_duration_sec) }}s</code> ·
+    Guard: <code>{% if chunk_plan.ref_guard_enabled %}{{ chunk_plan.ref_guard_silence_ms }}ms{% else %}off{% endif %}</code> ·
+    Target total: <code>{{ chunk_plan.target_total_sec }}s</code> ·
+    Hard total: <code>{{ chunk_plan.hard_total_sec }}s</code> ·
+    Max gen budget: <code>{{ chunk_plan.max_gen_budget_sec }}s</code>
+  </p>
+  {% if chunk_plan.processed_text != chunk_plan.stressed_text %}
+  <p>Processed text: <code>{{ chunk_plan.processed_text }}</code></p>
+  {% endif %}
+  <div class="chunk-table-wrap">
+    <table class="chunk-table">
+      <thead>
+        <tr>
+          <th>#</th>
+          <th>Est.</th>
+          <th>Total</th>
+          <th>Budget</th>
+          <th>Budget total</th>
+          <th>Pause</th>
+          <th>Frames</th>
+          <th>Reason</th>
+          <th>Text</th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for chunk in chunk_plan.chunks %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ '%.2f'|format(chunk.estimated_sec) }}s</td>
+          <td>{{ '%.2f'|format(chunk.total_sec) }}s</td>
+          <td>{{ '%.2f'|format(chunk.budget_sec) }}s</td>
+          <td>{{ '%.2f'|format(chunk.budget_total_sec) }}s</td>
+          <td>{{ '%.2f'|format(chunk.punctuation_pause_sec) }}s</td>
+          <td>{{ chunk.extra_frames }}</td>
+          <td><code>{{ chunk.reason }}</code></td>
+          <td>{{ chunk.text }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
+
 {% if not characters %}
 <div class="empty-state" style="padding:30px">
   <p>No characters configured. Create one first.</p>

@@ -14,6 +14,7 @@ from typing import Optional, List
 import torch
 import torchaudio
 import uvicorn
+from pydub import AudioSegment, silence
 from ruaccent import RUAccent
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.responses import Response, FileResponse, JSONResponse
@@ -29,6 +30,7 @@ from f5_tts.infer.utils_infer import (
     preprocess_ref_audio_text,
     infer_process,
 )
+from semantic_infer import DEFAULT_SEMANTIC_CHUNKING, build_chunk_plan, infer_process_semantic, merge_semantic_config
 from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
 
 logging.basicConfig(level=logging.INFO)
@@ -306,6 +308,7 @@ def load_app_config() -> dict:
             "sentence_case": True,
             "terminal_punctuation": True,
         },
+        "semantic_chunking": DEFAULT_SEMANTIC_CHUNKING,
     }
     config_path = Path(CONFIG_PATH)
     if config_path.exists():
@@ -314,6 +317,7 @@ def load_app_config() -> dict:
                 cfg = json.load(f)
             merged = default.copy()
             merged.update(cfg)
+            merged["semantic_chunking"] = merge_semantic_config(cfg.get("semantic_chunking", {}))
             return merged
         except Exception as e:
             logger.warning(f"Failed to load config.json: {e}, using defaults")
@@ -551,7 +555,17 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optiona
         Path(save_ref_text_to).write_text(ref_text_processed)
         logger.info("Saved auto-transcribed ref_text to %s", save_ref_text_to)
 
-    cleanup_atempo = False
+    semantic_cfg = merge_semantic_config((app_config or {}).get("semantic_chunking", {}))
+    use_semantic = semantic_cfg.get("enabled", True)
+    cleanup_paths = []
+
+    if use_semantic and ref_audio_processed != SILENCE_SENTINEL:
+        ref_audio_processed, ref_text_processed, quarantine_tmp = _maybe_quarantine_ref_tail(
+            ref_audio_processed, ref_text_processed, semantic_cfg
+        )
+        if quarantine_tmp:
+            cleanup_paths.append(quarantine_tmp)
+
     if speed > 1.0 and ref_audio_processed != SILENCE_SENTINEL:
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             atempo_path = tmp.name
@@ -561,39 +575,38 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optiona
              "-ac", "1", "-ar", str(TARGET_SR), atempo_path],
             capture_output=True, check=True,
         )
-        ref_audio_original = ref_audio_processed
         ref_audio_processed = atempo_path
-        cleanup_atempo = True
+        cleanup_paths.append(atempo_path)
 
         logger.info("Ref atempo speed=%.1f applied", speed)
 
-        out_wave, sr, _ = infer_process(
-            ref_audio=ref_audio_processed,
-            ref_text=ref_text_processed,
-            gen_text=gen_text,
-            model_obj=model_obj,
-            vocoder=vocoder,
-            device=device,
-            speed=1.0,
-            nfe_step=nfe_step,
-        )
-    else:
-        out_wave, sr, _ = infer_process(
-            ref_audio=ref_audio_processed,
-            ref_text=ref_text_processed,
-            gen_text=gen_text,
-            model_obj=model_obj,
-            vocoder=vocoder,
-            device=device,
-            speed=1.0,
-            nfe_step=nfe_step,
-        )
+    if use_semantic and semantic_cfg.get("ref_guard_enabled", True) and ref_audio_processed != SILENCE_SENTINEL:
+        guard_ms = int(semantic_cfg.get("ref_guard_silence_ms", 700))
+        if guard_ms > 0:
+            ref_audio_processed = _append_ref_guard_silence(ref_audio_processed, guard_ms)
+            cleanup_paths.append(ref_audio_processed)
+            logger.info("Ref guard silence appended: %dms", guard_ms)
 
-    if cleanup_atempo:
-        try:
-            os.unlink(ref_audio_processed)
-        except Exception:
-            pass
+    infer_fn = infer_process_semantic if use_semantic else infer_process
+    kwargs = {"semantic_config": semantic_cfg} if use_semantic else {}
+    try:
+        out_wave, sr, _ = infer_fn(
+            ref_audio=ref_audio_processed,
+            ref_text=ref_text_processed,
+            gen_text=gen_text,
+            model_obj=model_obj,
+            vocoder=vocoder,
+            device=device,
+            speed=1.0,
+            nfe_step=nfe_step,
+            **kwargs,
+        )
+    finally:
+        for path in cleanup_paths:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
 
     if out_wave is None:
         raise HTTPException(status_code=500, detail="Failed to generate audio")
@@ -603,6 +616,92 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optiona
         tmp.seek(0)
         content = tmp.read()
     return content, sr
+
+
+def _append_ref_guard_silence(audio_path: str, guard_ms: int) -> str:
+    audio, sr = torchaudio.load(audio_path)
+    silence = torch.zeros(audio.shape[0], int(sr * guard_ms / 1000), dtype=audio.dtype)
+    guarded = torch.cat([audio, silence], dim=-1)
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+        out_path = tmp.name
+    torchaudio.save(out_path, guarded, sr)
+    return out_path
+
+
+def _maybe_quarantine_ref_tail(audio_path: str, ref_text: str, semantic_cfg: dict) -> tuple[str, str, Optional[str]]:
+    if not semantic_cfg.get("ref_tail_quarantine_enabled", True):
+        return audio_path, ref_text, None
+
+    sentences = _split_ref_sentences(ref_text)
+    if len(sentences) < 2:
+        return audio_path, ref_text, None
+
+    max_units = int(semantic_cfg.get("ref_tail_max_units", 18))
+    max_removed_ms = int(semantic_cfg.get("ref_tail_max_removed_ms", 4500))
+    if max_units <= 0 or max_removed_ms <= 0:
+        return audio_path, ref_text, None
+
+    try:
+        aseg = AudioSegment.from_file(audio_path)
+        removed_sentences = []
+        removed_ms = 0
+        keep_ms = int(semantic_cfg.get("ref_tail_keep_silence_ms", 200))
+        min_silence_ms = int(semantic_cfg.get("ref_tail_min_silence_ms", 150))
+
+        while len(sentences) >= 2:
+            last_sentence = sentences[-1].strip()
+            if _speech_units_for_tail(last_sentence) > max_units:
+                break
+
+            ranges = silence.detect_nonsilent(
+                aseg,
+                min_silence_len=min_silence_ms,
+                silence_thresh=-50,
+                seek_step=10,
+            )
+            if len(ranges) < 2:
+                break
+
+            final_start, final_end = ranges[-1]
+            prev_end = ranges[-2][1]
+            if final_start <= prev_end:
+                break
+
+            cut_at = min(final_start, prev_end + max(0, keep_ms))
+            step_removed = len(aseg) - cut_at
+            if cut_at < 1000 or step_removed < 250 or removed_ms + step_removed > max_removed_ms:
+                break
+
+            aseg = aseg[:cut_at]
+            sentences = sentences[:-1]
+            removed_ms += step_removed
+            removed_sentences.append(last_sentence)
+
+        if not removed_sentences:
+            return audio_path, ref_text, None
+
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+            out_path = tmp.name
+        aseg.export(out_path, format="wav")
+        new_ref_text = " ".join(sentences).strip()
+        if new_ref_text and not new_ref_text.endswith(" "):
+            new_ref_text += " "
+        logger.info(
+            "Ref tail quarantined: removed %d final sentence(s) %s and %.0fms audio tail",
+            len(removed_sentences), removed_sentences, removed_ms,
+        )
+        return out_path, new_ref_text, out_path
+    except Exception as e:
+        logger.warning("Ref tail quarantine failed: %s", e)
+        return audio_path, ref_text, None
+
+
+def _split_ref_sentences(text: str) -> list[str]:
+    return [s.strip() for s in re.findall(r".+?(?:[.!?]+|$)(?:\s+|$)", text.strip()) if s.strip()]
+
+
+def _speech_units_for_tail(text: str) -> int:
+    return len(re.findall(r"[A-Za-zА-Яа-яЁё0-9]", text.replace("+", "")))
 
 
 def _lookup_voice(voice_name: str, emotion: Optional[str] = None) -> tuple[str, str]:
@@ -661,6 +760,67 @@ def text_to_speech(req: TTSRequest):
 
     media_type = "audio/mpeg" if req.response_format == "mp3" else "audio/wav"
     return Response(content=content, media_type=media_type)
+
+
+@app.post("/v1/audio/chunks/preview")
+def preview_chunks(req: TTSRequest):
+    tag_cfg = app_config.get("emotion_tag", {"open": "[", "close": "]"})
+    emotion, gen_text_clean = parse_emotion_tag(req.input, tag_cfg["open"], tag_cfg["close"])
+    if emotion:
+        emotion = app_emotion_map.get(emotion, emotion)
+
+    ref_audio_path, ref_text = _lookup_voice(req.voice, emotion)
+    speed = req.speed if req.speed is not None else _get_dynamic_speed(ref_audio_path, ref_text, gen_text_clean, 1.0)
+    speed = _apply_voice_speed_override(req.voice, speed)
+
+    gen_text = _apply_fix_gen_text(gen_text_clean)
+    gen_text = _apply_stress(gen_text)
+    ref_audio_processed, ref_text_processed = preprocess_ref_audio_text(
+        ref_audio_path, ref_text, show_info=logger.info
+    )
+    ref_text_processed = _apply_stress(ref_text_processed)
+
+    semantic_cfg = merge_semantic_config((app_config or {}).get("semantic_chunking", {}))
+    preview_cleanup = None
+    if semantic_cfg.get("enabled", True) and ref_audio_processed != SILENCE_SENTINEL:
+        ref_audio_processed, ref_text_processed, preview_cleanup = _maybe_quarantine_ref_tail(
+            ref_audio_processed, ref_text_processed, semantic_cfg
+        )
+    if ref_audio_processed == SILENCE_SENTINEL:
+        ref_duration = 1.0
+    else:
+        audio, sr = torchaudio.load(ref_audio_processed)
+        ref_duration = audio.shape[-1] / sr
+        if speed > 1.0:
+            ref_duration = ref_duration / speed
+        if semantic_cfg.get("enabled", True) and semantic_cfg.get("ref_guard_enabled", True):
+            ref_duration += max(0, int(semantic_cfg.get("ref_guard_silence_ms", 700))) / 1000.0
+
+    plan = build_chunk_plan(gen_text, ref_text_processed, ref_duration, semantic_cfg)
+    if preview_cleanup:
+        try:
+            os.unlink(preview_cleanup)
+        except Exception:
+            pass
+    plan.update({
+        "voice": req.voice,
+        "emotion": emotion or "normal",
+        "speed": speed,
+        "input_text": req.input,
+        "clean_text": gen_text_clean,
+        "stressed_text": gen_text,
+        "ref_text": ref_text_processed,
+    })
+    logger.info(
+        "Chunk preview voice=%s emotion=%s speed=%.2f chunks=%d",
+        req.voice, emotion or "normal", speed, len(plan["chunks"]),
+    )
+    for i, chunk in enumerate(plan["chunks"]):
+        logger.info(
+            "Chunk preview %d: %.2fs total=%.2fs frames=%d reason=%s text=%s",
+            i, chunk["estimated_sec"], chunk["total_sec"], chunk["extra_frames"], chunk["reason"], chunk["text"],
+        )
+    return JSONResponse(plan)
 
 
 @app.post("/v1/transcribe")
