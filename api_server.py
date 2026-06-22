@@ -581,7 +581,7 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optiona
         logger.info("Ref atempo speed=%.1f applied", speed)
 
     if use_semantic and semantic_cfg.get("ref_guard_enabled", True) and ref_audio_processed != SILENCE_SENTINEL:
-        guard_ms = int(semantic_cfg.get("ref_guard_silence_ms", 700))
+        guard_ms = int(semantic_cfg.get("ref_guard_silence_ms", 300))
         if guard_ms > 0:
             ref_audio_processed = _append_ref_guard_silence(ref_audio_processed, guard_ms)
             cleanup_paths.append(ref_audio_processed)
@@ -794,7 +794,7 @@ def preview_chunks(req: TTSRequest):
         if speed > 1.0:
             ref_duration = ref_duration / speed
         if semantic_cfg.get("enabled", True) and semantic_cfg.get("ref_guard_enabled", True):
-            ref_duration += max(0, int(semantic_cfg.get("ref_guard_silence_ms", 700))) / 1000.0
+            ref_duration += max(0, int(semantic_cfg.get("ref_guard_silence_ms", 300))) / 1000.0
 
     plan = build_chunk_plan(gen_text, ref_text_processed, ref_duration, semantic_cfg)
     if preview_cleanup:
@@ -817,8 +817,8 @@ def preview_chunks(req: TTSRequest):
     )
     for i, chunk in enumerate(plan["chunks"]):
         logger.info(
-            "Chunk preview %d: %.2fs total=%.2fs frames=%d reason=%s text=%s",
-            i, chunk["estimated_sec"], chunk["total_sec"], chunk["extra_frames"], chunk["reason"], chunk["text"],
+            "Chunk preview %d: est=%.2fs frame=%.2fs budget=%.2fs frames=%d reason=%s text=%s",
+            i, chunk["estimated_sec"], chunk["frame_sec"], chunk["budget_sec"], chunk["extra_frames"], chunk["reason"], chunk["text"],
         )
     return JSONResponse(plan)
 

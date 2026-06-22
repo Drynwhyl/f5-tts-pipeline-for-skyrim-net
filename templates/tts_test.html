@@ -78,7 +78,8 @@
     Guard: <code>{% if chunk_plan.ref_guard_enabled %}{{ chunk_plan.ref_guard_silence_ms }}ms{% else %}off{% endif %}</code> ·
     Target total: <code>{{ chunk_plan.target_total_sec }}s</code> ·
     Hard total: <code>{{ chunk_plan.hard_total_sec }}s</code> ·
-    Max gen budget: <code>{{ chunk_plan.max_gen_budget_sec }}s</code>
+    Max gen budget: <code>{{ chunk_plan.max_gen_budget_sec }}s</code> ·
+    Frame margin: <code>{{ chunk_plan.frame_margin }}</code>
   </p>
   {% if chunk_plan.processed_text != chunk_plan.stressed_text %}
   <p>Processed text: <code>{{ chunk_plan.processed_text }}</code></p>
@@ -90,6 +91,8 @@
           <th>#</th>
           <th>Est.</th>
           <th>Total</th>
+          <th>Frame</th>
+          <th>Frame total</th>
           <th>Budget</th>
           <th>Budget total</th>
           <th>Pause</th>
@@ -104,6 +107,8 @@
           <td>{{ loop.index }}</td>
           <td>{{ '%.2f'|format(chunk.estimated_sec) }}s</td>
           <td>{{ '%.2f'|format(chunk.total_sec) }}s</td>
+          <td>{{ '%.2f'|format(chunk.frame_sec) }}s</td>
+          <td>{{ '%.2f'|format(chunk.frame_total_sec) }}s</td>
           <td>{{ '%.2f'|format(chunk.budget_sec) }}s</td>
           <td>{{ '%.2f'|format(chunk.budget_total_sec) }}s</td>
           <td>{{ '%.2f'|format(chunk.punctuation_pause_sec) }}s</td>

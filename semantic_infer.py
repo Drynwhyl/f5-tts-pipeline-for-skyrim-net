@@ -30,13 +30,20 @@ DEFAULT_SEMANTIC_CHUNKING = {
     "max_gen_budget_sec": 10.0,
     "min_chunk_sec": 1.4,
     "duration_margin": 1.15,
+    "frame_margin": 1.10,
     "ref_guard_enabled": True,
-    "ref_guard_silence_ms": 700,
+    "ref_guard_silence_ms": 300,
     "ref_tail_quarantine_enabled": True,
     "ref_tail_max_units": 40,
     "ref_tail_min_silence_ms": 150,
     "ref_tail_keep_silence_ms": 200,
     "ref_tail_max_removed_ms": 4500,
+    "generated_trim": {
+        "enabled": True,
+        "leading_keep_ms": 300,
+        "trailing_keep_ms": 160,
+        "silence_thresh_db": -50,
+    },
     "punctuation": {
         "comma": 0.20,
         "semicolon": 0.30,
@@ -70,10 +77,12 @@ class ChunkPlan:
     text: str
     raw_text: str
     estimated_sec: float
+    frame_sec: float
     budget_sec: float
     speech_units: float
     punctuation_pause_sec: float
     total_sec: float
+    frame_total_sec: float
     budget_total_sec: float
     extra_frames: int
     reason: str
@@ -114,7 +123,7 @@ def build_chunk_plan(text: str, ref_text: str, ref_duration_sec: float, config: 
     ref_units = max(_speech_units(ref_text), 1.0)
     guard_sec = 0.0
     if cfg.get("ref_guard_enabled", True):
-        guard_sec = max(0, int(cfg.get("ref_guard_silence_ms", 700))) / 1000.0
+        guard_sec = max(0, int(cfg.get("ref_guard_silence_ms", 300))) / 1000.0
     ref_speech_duration_sec = max(ref_duration_sec - guard_sec, 0.1)
     ref_units_per_sec = ref_units / ref_speech_duration_sec
 
@@ -126,16 +135,18 @@ def build_chunk_plan(text: str, ref_text: str, ref_duration_sec: float, config: 
     plans: list[ChunkPlan] = []
     for chunk_text, reason in chunks:
         metrics = _estimate_text(chunk_text, ref_units_per_sec, cfg)
-        extra_frames = int(metrics["budget_sec"] * target_sample_rate / hop_length)
+        extra_frames = int(metrics["frame_sec"] * target_sample_rate / hop_length)
         plans.append(
             ChunkPlan(
                 text=chunk_text,
                 raw_text=chunk_text,
                 estimated_sec=metrics["estimated_sec"],
+                frame_sec=metrics["frame_sec"],
                 budget_sec=metrics["budget_sec"],
                 speech_units=metrics["speech_units"],
                 punctuation_pause_sec=metrics["punctuation_pause_sec"],
                 total_sec=ref_duration_sec + metrics["estimated_sec"],
+                frame_total_sec=ref_duration_sec + metrics["frame_sec"],
                 budget_total_sec=ref_duration_sec + metrics["budget_sec"],
                 extra_frames=extra_frames,
                 reason=reason,
@@ -152,8 +163,10 @@ def build_chunk_plan(text: str, ref_text: str, ref_duration_sec: float, config: 
         "target_total_sec": cfg["target_total_sec"],
         "hard_total_sec": cfg["hard_total_sec"],
         "max_gen_budget_sec": max_gen_budget_sec,
+        "frame_margin": float(cfg.get("frame_margin", 1.0)),
         "ref_guard_enabled": cfg.get("ref_guard_enabled", True),
-        "ref_guard_silence_ms": int(cfg.get("ref_guard_silence_ms", 700)),
+        "ref_guard_silence_ms": int(cfg.get("ref_guard_silence_ms", 300)),
+        "generated_trim": cfg.get("generated_trim", {}),
         "chunks": [p.__dict__ for p in plans],
     }
 
@@ -185,7 +198,7 @@ def infer_process_semantic(
     for i, chunk in enumerate(chunks):
         print(
             "gen_text %d %.2fs total=%.2fs frames=%d reason=%s %s"
-            % (i, chunk["budget_sec"], chunk["budget_total_sec"], chunk["extra_frames"], chunk["reason"], chunk["text"])
+            % (i, chunk["frame_sec"], chunk["frame_total_sec"], chunk["extra_frames"], chunk["reason"], chunk["text"])
         )
     print("\n")
 
@@ -211,6 +224,7 @@ def infer_process_semantic(
             speed=speed,
             fix_duration=fix_duration,
             device=device,
+            semantic_config=semantic_config,
         )
     )
 
@@ -231,7 +245,9 @@ def _infer_batch_process_semantic(
     speed=1,
     fix_duration=None,
     device=None,
+    semantic_config=None,
 ):
+    cfg = merge_semantic_config(semantic_config)
     audio, sr = ref_audio
     if audio.shape[0] > 1:
         audio = torch.mean(audio, dim=0, keepdim=True)
@@ -285,6 +301,7 @@ def _infer_batch_process_semantic(
             if rms < target_rms:
                 generated_wave = generated_wave * rms / target_rms
             generated_wave = generated_wave.squeeze().cpu().numpy()
+            generated_wave = _trim_generated_edges(generated_wave, target_sample_rate, cfg)
 
         generated_cpu = generated[0].cpu().numpy()
         del generated
@@ -494,13 +511,35 @@ def _estimate_text(text: str, ref_units_per_sec: float, cfg: dict[str, Any]):
     units = _speech_units(text)
     pause = _punctuation_pause(text, cfg)
     estimated_sec = units / max(ref_units_per_sec, 0.1) + pause
+    frame_sec = max(2.0, estimated_sec * float(cfg.get("frame_margin", 1.0)))
     budget_sec = max(2.0, estimated_sec * float(cfg.get("duration_margin", 1.15)))
     return {
         "speech_units": units,
         "punctuation_pause_sec": pause,
         "estimated_sec": estimated_sec,
+        "frame_sec": frame_sec,
         "budget_sec": budget_sec,
     }
+
+
+def _trim_generated_edges(wave: np.ndarray, sample_rate: int, cfg: dict[str, Any]) -> np.ndarray:
+    trim_cfg = cfg.get("generated_trim", {}) or {}
+    if not trim_cfg.get("enabled", True) or wave.size == 0:
+        return wave
+
+    threshold_db = float(trim_cfg.get("silence_thresh_db", -50))
+    threshold = 10 ** (threshold_db / 20.0)
+    voiced = np.flatnonzero(np.abs(wave) > threshold)
+    if voiced.size == 0:
+        return wave
+
+    leading_keep = int(max(0, int(trim_cfg.get("leading_keep_ms", 80))) * sample_rate / 1000)
+    trailing_keep = int(max(0, int(trim_cfg.get("trailing_keep_ms", 160))) * sample_rate / 1000)
+    start = max(0, int(voiced[0]) - leading_keep)
+    end = min(wave.size, int(voiced[-1]) + trailing_keep + 1)
+    if start == 0 and end == wave.size:
+        return wave
+    return wave[start:end]
 
 
 def _speech_units(text: str) -> float:

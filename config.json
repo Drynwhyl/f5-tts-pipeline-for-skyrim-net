@@ -83,13 +83,20 @@
     "max_gen_budget_sec": 10.0,
     "min_chunk_sec": 1.4,
     "duration_margin": 1.15,
+    "frame_margin": 1.1,
     "ref_guard_enabled": true,
-    "ref_guard_silence_ms": 700,
+    "ref_guard_silence_ms": 300,
     "ref_tail_quarantine_enabled": true,
     "ref_tail_max_units": 40,
     "ref_tail_min_silence_ms": 150,
     "ref_tail_keep_silence_ms": 200,
     "ref_tail_max_removed_ms": 4500,
+    "generated_trim": {
+      "enabled": true,
+      "leading_keep_ms": 300,
+      "trailing_keep_ms": 160,
+      "silence_thresh_db": -50
+    },
     "punctuation": {
       "comma": 0.2,
       "semicolon": 0.3,
