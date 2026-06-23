@@ -15,8 +15,8 @@ import base64
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-OUT_DIR = Path("/tmp/f5-tts-speed-test")
-API_URL = "http://localhost:8000"
+OUT_DIR = Path(os.environ.get("F5_TTS_SPEED_TEST_DIR", "/tmp/f5-tts-speed-test"))
+API_URL = os.environ.get("F5_TTS_API_URL", "http://localhost:8000")
 
 VOICES = ["sacred_demoness", "sacred_dark_elf"]
 SPEEDS = [1.0, 1.5, 2.0]

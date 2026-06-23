@@ -71,6 +71,25 @@
 {% endif %}
 
 {% if chunk_plan %}
+{% if chunk_plan.runtime_ref and chunk_plan.runtime_ref.available %}
+<div class="chunk-preview">
+  <h3>Runtime Ref</h3>
+  <p>
+    Duration: <code>{{ '%.2f'|format(chunk_plan.runtime_ref.duration_sec) }}s</code> ·
+    Speed: <code>{{ chunk_plan.runtime_ref.speed }}</code> ·
+    Guard: <code>{{ chunk_plan.runtime_ref.guard_ms }}ms</code>
+  </p>
+  <audio src="data:audio/wav;base64,{{ chunk_plan.runtime_ref.audio_base64 }}" controls preload="auto"></audio>
+  <p>Runtime ref text: <code>{{ chunk_plan.runtime_ref.text }}</code></p>
+  <p>Whisper transcript: <code>{{ chunk_plan.runtime_ref.transcript }}</code></p>
+</div>
+{% elif chunk_plan.runtime_ref and chunk_plan.runtime_ref.error %}
+<div class="chunk-preview">
+  <h3>Runtime Ref</h3>
+  <p>Debug failed: <code>{{ chunk_plan.runtime_ref.error }}</code></p>
+</div>
+{% endif %}
+
 <div class="chunk-preview">
   <h3>Chunk Plan</h3>
   <p>

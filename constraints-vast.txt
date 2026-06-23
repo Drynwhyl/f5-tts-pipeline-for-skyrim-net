@@ -1,0 +1,8 @@
+# torchcodec 0.14.0 expects CUDA 13 runtime libraries and breaks this stack.
+torchcodec==0.13.0
+
+# Keep the installed stack aligned with the current known-good VM.
+torch==2.11.0+cu128
+torchaudio==2.11.0+cu128
+f5-tts==1.1.20
+ruaccent==1.5.8.3

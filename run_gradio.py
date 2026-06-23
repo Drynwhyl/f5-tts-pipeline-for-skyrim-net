@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """Gradio launcher for F5-TTS Russian model."""
 import json, os, sys, importlib
+from pathlib import Path
 
-CKPT = "/home/drynw/models/f5-tts/F5TTS_v1_Base_v2/model_last_inference.safetensors"
-VOCAB = "/home/drynw/models/f5-tts/F5TTS_v1_Base_v2/vocab.txt"
+BASE_DIR = Path(os.environ.get("F5_TTS_BASE_DIR", "/workspace/f5-tts")).expanduser()
+MODEL_DIR = Path(os.environ.get("F5_TTS_MODEL_DIR", str(BASE_DIR / "F5TTS_v1_Base_v2"))).expanduser()
+CKPT = os.environ.get("F5_TTS_MODEL_PATH", str(MODEL_DIR / "model_last_inference.safetensors"))
+VOCAB = os.environ.get("F5_TTS_VOCAB_PATH", str(MODEL_DIR / "vocab.txt"))
 CFG = json.dumps(dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4))
 
 import cached_path as cp

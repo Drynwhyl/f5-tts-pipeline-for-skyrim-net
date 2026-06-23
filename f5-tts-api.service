@@ -8,6 +8,10 @@ Type=simple
 User=drynw
 WorkingDirectory=/home/drynw/models/f5-tts
 Environment=PATH=/home/drynw/f5-tts-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+Environment=F5_TTS_BASE_DIR=/home/drynw/models/f5-tts
+Environment=F5_TTS_VENV=/home/drynw/f5-tts-env
+Environment=F5_TTS_CACHE_DIR=/tmp/f5-tts-cache
+Environment=F5_TTS_RUACCENT_DIR=/home/drynw/f5-tts-env/lib/python3.10/site-packages/ruaccent
 ExecStart=/home/drynw/f5-tts-env/bin/python3 /home/drynw/models/f5-tts/api_server.py
 Restart=on-failure
 RestartSec=10

@@ -4,6 +4,7 @@ import re
 import time
 import uuid
 import json
+import base64
 import shutil
 import tempfile
 import logging
@@ -36,10 +37,14 @@ from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEF
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("f5-tts-api")
 
-MODEL_PATH = "/home/drynw/models/f5-tts/F5TTS_v1_Base_v2/model_last_inference.safetensors"
-VOCAB_PATH = "/home/drynw/models/f5-tts/F5TTS_v1_Base_v2/vocab.txt"
-VOICES_DIR = "/home/drynw/models/f5-tts/voices"
-CONFIG_PATH = "/home/drynw/models/f5-tts/config.json"
+BASE_DIR = Path(os.environ.get("F5_TTS_BASE_DIR", "/workspace/f5-tts")).expanduser()
+MODEL_DIR = Path(os.environ.get("F5_TTS_MODEL_DIR", str(BASE_DIR / "F5TTS_v1_Base_v2"))).expanduser()
+MODEL_PATH = os.environ.get("F5_TTS_MODEL_PATH", str(MODEL_DIR / "model_last_inference.safetensors"))
+VOCAB_PATH = os.environ.get("F5_TTS_VOCAB_PATH", str(MODEL_DIR / "vocab.txt"))
+VOICES_DIR = os.environ.get("F5_TTS_VOICES_DIR", os.environ.get("F5_VOICES_DIR", str(BASE_DIR / "voices")))
+CONFIG_PATH = os.environ.get("F5_TTS_CONFIG_PATH", str(BASE_DIR / "config.json"))
+CACHE_DIR = Path(os.environ.get("F5_TTS_CACHE_DIR", "/workspace/f5-tts-cache")).expanduser()
+RUACCENT_WORKDIR = os.environ.get("F5_TTS_RUACCENT_DIR", str(BASE_DIR / "ruaccent-data"))
 CLONED_VOICES_DIR_NAME = "_cloned"
 DEFAULT_REF_AUDIO = os.environ.get("F5_DEFAULT_REF_AUDIO", "")
 
@@ -430,7 +435,7 @@ def startup():
     try:
         accentor = RUAccent()
         custom_dict = app_config.get("custom_accent_dict", {}) or {}
-        accentor.load(use_dictionary=True, custom_dict=custom_dict)
+        accentor.load(use_dictionary=True, custom_dict=custom_dict, workdir=RUACCENT_WORKDIR)
         logger.info("RUAccent loaded successfully")
         _transcribe_empty_refs()
         _stress_ref_texts()
@@ -816,6 +821,46 @@ def _speech_units_for_tail(text: str) -> int:
     return len(re.findall(r"[A-Za-zА-Яа-яЁё0-9]", text.replace("+", "")))
 
 
+def _build_runtime_ref_debug(audio_path: str, ref_text: str, speed: float, semantic_cfg: dict) -> dict:
+    if audio_path == SILENCE_SENTINEL:
+        return {
+            "available": False,
+            "text": ref_text,
+            "transcript": "",
+            "audio_base64": "",
+            "duration_sec": 0.0,
+            "speed": speed,
+            "guard_ms": 0,
+        }
+
+    try:
+        audio, sr = torchaudio.load(audio_path)
+        duration_sec = audio.shape[-1] / sr
+        with open(audio_path, "rb") as f:
+            audio_b64 = base64.b64encode(f.read()).decode()
+        return {
+            "available": True,
+            "text": ref_text,
+            "transcript": _transcribe_audio_file(audio_path),
+            "audio_base64": audio_b64,
+            "duration_sec": duration_sec,
+            "speed": speed,
+            "guard_ms": int(semantic_cfg.get("effective_ref_guard_silence_ms", semantic_cfg.get("ref_guard_silence_ms", 0))),
+        }
+    except Exception as e:
+        logger.warning("Runtime ref debug failed: %s", e)
+        return {
+            "available": False,
+            "text": ref_text,
+            "transcript": "",
+            "audio_base64": "",
+            "duration_sec": 0.0,
+            "speed": speed,
+            "guard_ms": int(semantic_cfg.get("effective_ref_guard_silence_ms", semantic_cfg.get("ref_guard_silence_ms", 0))),
+            "error": str(e),
+        }
+
+
 def _lookup_voice(voice_name: str, emotion: Optional[str] = None) -> tuple[str, str]:
     if app_config.get("ignore_player_voice", False):
         ignored = [p.lower() for p in app_config.get("ignored_voice_patterns", [])]
@@ -893,25 +938,40 @@ def preview_chunks(req: TTSRequest):
     ref_text_processed = _apply_stress(ref_text_processed)
 
     semantic_cfg = _runtime_semantic_config((app_config or {}).get("semantic_chunking", {}), speed)
-    preview_cleanup = None
+    preview_cleanup = []
     if semantic_cfg.get("enabled", True) and ref_audio_processed != SILENCE_SENTINEL:
-        ref_audio_processed, ref_text_processed, preview_cleanup = _maybe_quarantine_ref_tail(
+        ref_audio_processed, ref_text_processed, quarantine_tmp = _maybe_quarantine_ref_tail(
             ref_audio_processed, ref_text_processed, semantic_cfg, speed
         )
+        if quarantine_tmp:
+            preview_cleanup.append(quarantine_tmp)
     if ref_audio_processed == SILENCE_SENTINEL:
         ref_duration = 1.0
     else:
+        if speed > 1.0:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
+                atempo_path = tmp.name
+            __import__("subprocess").run(
+                ["ffmpeg", "-y", "-i", ref_audio_processed,
+                 "-filter:a", f"atempo={speed}",
+                 "-ac", "1", "-ar", str(TARGET_SR), atempo_path],
+                capture_output=True, check=True,
+            )
+            ref_audio_processed = atempo_path
+            preview_cleanup.append(atempo_path)
+        if semantic_cfg.get("enabled", True) and semantic_cfg.get("ref_guard_enabled", True):
+            guard_ms = int(semantic_cfg.get("effective_ref_guard_silence_ms", semantic_cfg.get("ref_guard_silence_ms", 300)))
+            if guard_ms > 0:
+                ref_audio_processed = _append_ref_guard_silence(ref_audio_processed, guard_ms)
+                preview_cleanup.append(ref_audio_processed)
         audio, sr = torchaudio.load(ref_audio_processed)
         ref_duration = audio.shape[-1] / sr
-        if speed > 1.0:
-            ref_duration = ref_duration / speed
-        if semantic_cfg.get("enabled", True) and semantic_cfg.get("ref_guard_enabled", True):
-            ref_duration += max(0, int(semantic_cfg.get("effective_ref_guard_silence_ms", semantic_cfg.get("ref_guard_silence_ms", 300)))) / 1000.0
 
     plan = build_chunk_plan(gen_text, ref_text_processed, ref_duration, semantic_cfg)
-    if preview_cleanup:
+    runtime_ref_debug = _build_runtime_ref_debug(ref_audio_processed, ref_text_processed, speed, semantic_cfg)
+    for path in preview_cleanup:
         try:
-            os.unlink(preview_cleanup)
+            os.unlink(path)
         except Exception:
             pass
     plan.update({
@@ -922,6 +982,7 @@ def preview_chunks(req: TTSRequest):
         "clean_text": gen_text_clean,
         "stressed_text": gen_text,
         "ref_text": ref_text_processed,
+        "runtime_ref": runtime_ref_debug,
     })
     logger.info(
         "Chunk preview voice=%s emotion=%s speed=%.2f chunks=%d",
@@ -1065,7 +1126,7 @@ async def tts_to_audio(request: StarRequest):
         content, _ = _tts_infer(ref_audio_path, ref_text, gen_text, speed, save_ref_text_to=save_ref)
 
         if save_path:
-            save_dir = Path("/tmp/f5-tts-cache")
+            save_dir = CACHE_DIR
             save_dir.mkdir(parents=True, exist_ok=True)
             dest = save_dir / save_path
             with open(dest, "wb") as f:

@@ -125,198 +125,271 @@
   </div>
 
   <div class="config-section">
-    <h3>Semantic Chunking</h3>
-    <p style="color:#8b949e;font-size:13px;margin-bottom:16px">
-      Plans natural breath points for long Russian phrases and reserves extra frame budget for punctuation pauses.
-      Single F5-TTS generation is treated as <code>ref audio + generated audio</code>.
-    </p>
-    <div class="form-group">
-      <label class="checkbox-label">
+    <div class="section-title-row">
+      <div>
+        <h3>Semantic Chunking</h3>
+        <p class="section-help">
+          Controls where long Russian phrases are split, how much duration the model receives,
+          and how the reference prompt boundary is protected.
+        </p>
+      </div>
+      <label class="switch-row">
         <input type="checkbox" name="semantic_enabled" value="1"
           {% if config.semantic_chunking.enabled %}checked{% endif %}>
-        Enable semantic chunking
+        Enable
       </label>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px">
-      <div class="form-group">
-        <label>Target total (s)</label>
-        <input type="number" name="semantic_target_total_sec" value="{{ config.semantic_chunking.target_total_sec }}" min="10" max="30" step="0.5">
+
+    <div class="settings-group">
+      <div class="settings-group-header">
+        <h4>Chunk Planning</h4>
+        <p>These decide where text is split. They should change the plan without directly slowing every generated word.</p>
       </div>
-      <div class="form-group">
-        <label>Hard total (s)</label>
-        <input type="number" name="semantic_hard_total_sec" value="{{ config.semantic_chunking.hard_total_sec }}" min="10" max="30" step="0.5">
-      </div>
-      <div class="form-group">
-        <label>Max gen budget (s)</label>
-        <input type="number" name="semantic_max_gen_budget_sec" value="{{ config.semantic_chunking.max_gen_budget_sec }}" min="3" max="20" step="0.5">
-      </div>
-      <div class="form-group">
-        <label>Min chunk (s)</label>
-        <input type="number" name="semantic_min_chunk_sec" value="{{ config.semantic_chunking.min_chunk_sec }}" min="0.5" max="5" step="0.1">
-      </div>
-      <div class="form-group">
-        <label>Duration margin</label>
-        <input type="number" name="semantic_duration_margin" value="{{ config.semantic_chunking.duration_margin }}" min="1.0" max="1.6" step="0.05">
-      </div>
-      <div class="form-group">
-        <label>Frame margin</label>
-        <input type="number" name="semantic_frame_margin" value="{{ config.semantic_chunking.frame_margin }}" min="0.8" max="1.3" step="0.02">
-      </div>
-      <div class="form-group">
-        <label>Ref guard silence (ms)</label>
-        <input type="number" name="semantic_ref_guard_silence_ms" value="{{ config.semantic_chunking.ref_guard_silence_ms }}" min="0" max="2000" step="50">
-      </div>
-      <div class="form-group">
-        <label>Guard speed scale (ms)</label>
-        <input type="number" name="semantic_ref_guard_speed_scale_ms" value="{{ config.semantic_chunking.ref_guard_speed_scale_ms }}" min="0" max="2000" step="50">
-      </div>
-      <div class="form-group">
-        <label>Guard max (ms)</label>
-        <input type="number" name="semantic_ref_guard_max_silence_ms" value="{{ config.semantic_chunking.ref_guard_max_silence_ms }}" min="0" max="3000" step="50">
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="semantic_ref_guard_enabled" value="1"
-            {% if config.semantic_chunking.ref_guard_enabled %}checked{% endif %}>
-          Append ref guard silence
-        </label>
-      </div>
-      <div class="form-group">
-        <label>Tail max units</label>
-        <input type="number" name="semantic_ref_tail_max_units" value="{{ config.semantic_chunking.ref_tail_max_units }}" min="0" max="60" step="1">
-      </div>
-      <div class="form-group">
-        <label>Tail silence (ms)</label>
-        <input type="number" name="semantic_ref_tail_min_silence_ms" value="{{ config.semantic_chunking.ref_tail_min_silence_ms }}" min="50" max="1000" step="50">
-      </div>
-      <div class="form-group">
-        <label>Tail keep silence (ms)</label>
-        <input type="number" name="semantic_ref_tail_keep_silence_ms" value="{{ config.semantic_chunking.ref_tail_keep_silence_ms }}" min="0" max="1000" step="50">
-      </div>
-      <div class="form-group">
-        <label>Tail max removed (ms)</label>
-        <input type="number" name="semantic_ref_tail_max_removed_ms" value="{{ config.semantic_chunking.ref_tail_max_removed_ms }}" min="0" max="8000" step="250">
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="semantic_ref_tail_quarantine_enabled" value="1"
-            {% if config.semantic_chunking.ref_tail_quarantine_enabled %}checked{% endif %}>
-          Quarantine short ref tail
-        </label>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="semantic_ref_tail_clause_quarantine_enabled" value="1"
-            {% if config.semantic_chunking.ref_tail_clause_quarantine_enabled %}checked{% endif %}>
-          Quarantine ref tail clause
-        </label>
-      </div>
-      <div class="form-group">
-        <label>Clause min speed</label>
-        <input type="number" name="semantic_ref_tail_clause_min_speed" value="{{ config.semantic_chunking.ref_tail_clause_min_speed }}" min="1" max="3" step="0.05">
-      </div>
-      <div class="form-group">
-        <label>Clause max units</label>
-        <input type="number" name="semantic_ref_tail_clause_max_units" value="{{ config.semantic_chunking.ref_tail_clause_max_units }}" min="0" max="80" step="1">
-      </div>
-      <div class="form-group">
-        <label>Clause min remaining</label>
-        <input type="number" name="semantic_ref_tail_clause_min_remaining_units" value="{{ config.semantic_chunking.ref_tail_clause_min_remaining_units }}" min="0" max="120" step="1">
-      </div>
-      <div class="form-group">
-        <label>Clause max removed (ms)</label>
-        <input type="number" name="semantic_ref_tail_clause_max_removed_ms" value="{{ config.semantic_chunking.ref_tail_clause_max_removed_ms }}" min="0" max="10000" step="250">
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="semantic_weak_start_merge_enabled" value="1"
-            {% if config.semantic_chunking.weak_start_merge_enabled %}checked{% endif %}>
-          Merge weak chunk starts
-        </label>
-      </div>
-      <div class="form-group">
-        <label>Weak start slack (s)</label>
-        <input type="number" name="semantic_weak_start_merge_slack_sec" value="{{ config.semantic_chunking.weak_start_merge_slack_sec }}" min="0" max="2" step="0.05">
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="semantic_generated_trim_enabled" value="1"
-            {% if config.semantic_chunking.generated_trim.enabled %}checked{% endif %}>
-          Trim generated edges
-        </label>
-      </div>
-      <div class="form-group">
-        <label>Gen leading keep (ms)</label>
-        <input type="number" name="semantic_generated_trim_leading_keep_ms" value="{{ config.semantic_chunking.generated_trim.leading_keep_ms }}" min="0" max="1000" step="20">
-      </div>
-      <div class="form-group">
-        <label>Gen trailing keep (ms)</label>
-        <input type="number" name="semantic_generated_trim_trailing_keep_ms" value="{{ config.semantic_chunking.generated_trim.trailing_keep_ms }}" min="0" max="1000" step="20">
-      </div>
-      <div class="form-group">
-        <label>Gen trim threshold (dB)</label>
-        <input type="number" name="semantic_generated_trim_silence_thresh_db" value="{{ config.semantic_chunking.generated_trim.silence_thresh_db }}" min="-80" max="-20" step="1">
+      <div class="settings-grid">
+        <div class="form-group">
+          <label title="Preferred maximum total seconds for one F5 call: runtime ref plus generated chunk.">Target Total (s)</label>
+          <input type="number" name="semantic_target_total_sec" value="{{ config.semantic_chunking.target_total_sec }}" min="10" max="30" step="0.5">
+          <div class="field-help">Preferred <code>ref + gen</code> window.</div>
+        </div>
+        <div class="form-group">
+          <label title="Absolute fallback total seconds. Chunks may approach this only when no better semantic boundary exists.">Hard Total (s)</label>
+          <input type="number" name="semantic_hard_total_sec" value="{{ config.semantic_chunking.hard_total_sec }}" min="10" max="30" step="0.5">
+          <div class="field-help">Last-resort <code>ref + gen</code> limit.</div>
+        </div>
+        <div class="form-group">
+          <label title="Caps generated chunk budget even when the total F5 window still has room.">Max Gen Budget (s)</label>
+          <input type="number" name="semantic_max_gen_budget_sec" value="{{ config.semantic_chunking.max_gen_budget_sec }}" min="3" max="20" step="0.5">
+          <div class="field-help">Prevents huge single chunks.</div>
+        </div>
+        <div class="form-group">
+          <label title="Avoids splitting tiny vocatives or decorative tails into separate unnatural chunks.">Min Chunk (s)</label>
+          <input type="number" name="semantic_min_chunk_sec" value="{{ config.semantic_chunking.min_chunk_sec }}" min="0.5" max="5" step="0.1">
+          <div class="field-help">Minimum planned phrase size.</div>
+        </div>
+        <div class="form-group">
+          <label title="Safety margin for split decisions only. This should not be treated as real generation duration.">Duration Margin</label>
+          <input type="number" name="semantic_duration_margin" value="{{ config.semantic_chunking.duration_margin }}" min="1.0" max="1.6" step="0.05">
+          <div class="field-help">Planning safety margin.</div>
+        </div>
+        <div class="form-group">
+          <label title="Real generated-frame margin. Raising it reduces dropout risk but can stretch vowels and pauses.">Frame Margin</label>
+          <input type="number" name="semantic_frame_margin" value="{{ config.semantic_chunking.frame_margin }}" min="0.8" max="1.3" step="0.02">
+          <div class="field-help">Actual model duration margin.</div>
+        </div>
       </div>
     </div>
-    <div style="display:grid;grid-template-columns:repeat(3, 1fr);gap:12px">
-      <div class="form-group">
-        <label>Comma pause (s)</label>
-        <input type="number" name="semantic_punct_comma" value="{{ config.semantic_chunking.punctuation.comma }}" min="0" max="1" step="0.05">
+
+    <div class="settings-group">
+      <div class="settings-group-header">
+        <h4>Prompt Boundary</h4>
+        <p>Guard silence separates the reference prompt from generated speech. Runtime trimming is intentionally off by default.</p>
       </div>
-      <div class="form-group">
-        <label>Sentence pause (s)</label>
-        <input type="number" name="semantic_punct_sentence" value="{{ config.semantic_chunking.punctuation.sentence }}" min="0" max="1.5" step="0.05">
-      </div>
-      <div class="form-group">
-        <label>Ellipsis pause (s)</label>
-        <input type="number" name="semantic_punct_ellipsis" value="{{ config.semantic_chunking.punctuation.ellipsis }}" min="0" max="2" step="0.05">
-      </div>
-      <div class="form-group">
-        <label>Semicolon pause (s)</label>
-        <input type="number" name="semantic_punct_semicolon" value="{{ config.semantic_chunking.punctuation.semicolon }}" min="0" max="1.5" step="0.05">
-      </div>
-      <div class="form-group">
-        <label>Colon pause (s)</label>
-        <input type="number" name="semantic_punct_colon" value="{{ config.semantic_chunking.punctuation.colon }}" min="0" max="1.5" step="0.05">
-      </div>
-      <div class="form-group">
-        <label>Dash pause (s)</label>
-        <input type="number" name="semantic_punct_dash" value="{{ config.semantic_chunking.punctuation.dash }}" min="0" max="1.5" step="0.05">
-      </div>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px">
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="comma_softening_enabled" value="1"
-            {% if config.semantic_chunking.comma_softening.enabled %}checked{% endif %}>
-          Soften selected commas
-        </label>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="comma_softening_vocative" value="1"
-            {% if config.semantic_chunking.comma_softening.vocative_enabled %}checked{% endif %}>
-          Vocative starts
-        </label>
-      </div>
-      <div class="form-group">
-        <label class="checkbox-label">
-          <input type="checkbox" name="comma_softening_tail" value="1"
-            {% if config.semantic_chunking.comma_softening.decorative_tail_enabled %}checked{% endif %}>
-          Decorative tails
-        </label>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="semantic_ref_guard_enabled" value="1"
+              {% if config.semantic_chunking.ref_guard_enabled %}checked{% endif %}>
+            Append Ref Guard
+          </label>
+          <div class="field-help">Adds silence after the runtime reference prompt.</div>
+        </div>
+        <div class="form-group">
+          <label title="Base silence appended after the processed reference audio.">Base Guard (ms)</label>
+          <input type="number" name="semantic_ref_guard_silence_ms" value="{{ config.semantic_chunking.ref_guard_silence_ms }}" min="0" max="2000" step="50">
+          <div class="field-help">Guard at speed 1.0.</div>
+        </div>
+        <div class="form-group">
+          <label title="Extra guard added as speed increases: base + (speed - 1.0) * scale.">Speed Scale (ms)</label>
+          <input type="number" name="semantic_ref_guard_speed_scale_ms" value="{{ config.semantic_chunking.ref_guard_speed_scale_ms }}" min="0" max="2000" step="50">
+          <div class="field-help">Extra silence for fast refs.</div>
+        </div>
+        <div class="form-group">
+          <label title="Maximum effective guard after speed scaling.">Guard Max (ms)</label>
+          <input type="number" name="semantic_ref_guard_max_silence_ms" value="{{ config.semantic_chunking.ref_guard_max_silence_ms }}" min="0" max="3000" step="50">
+          <div class="field-help">Upper bound for effective guard.</div>
+        </div>
       </div>
     </div>
-    <div class="form-group">
-      <label>Decorative tails</label>
-      <textarea name="semantic_decorative_tails" rows="3"
-        style="width:100%;background:#161b22;color:#e1e4e8;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:13px;resize:vertical">{{ config.semantic_chunking.comma_softening.decorative_tails | join(', ') }}</textarea>
+
+    <div class="settings-group">
+      <div class="settings-group-header">
+        <h4>Generated Edges</h4>
+        <p>Only trims leading and trailing silence from generated chunks before cross-fade. Internal pauses stay intact.</p>
+      </div>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="semantic_generated_trim_enabled" value="1"
+              {% if config.semantic_chunking.generated_trim.enabled %}checked{% endif %}>
+            Trim Generated Edges
+          </label>
+          <div class="field-help">Removes empty starts and tails.</div>
+        </div>
+        <div class="form-group">
+          <label title="How much audio to preserve before first detected speech sample.">Leading Keep (ms)</label>
+          <input type="number" name="semantic_generated_trim_leading_keep_ms" value="{{ config.semantic_chunking.generated_trim.leading_keep_ms }}" min="0" max="1000" step="20">
+          <div class="field-help">Protects quiet word attacks.</div>
+        </div>
+        <div class="form-group">
+          <label title="How much audio to preserve after last detected speech sample.">Trailing Keep (ms)</label>
+          <input type="number" name="semantic_generated_trim_trailing_keep_ms" value="{{ config.semantic_chunking.generated_trim.trailing_keep_ms }}" min="0" max="1000" step="20">
+          <div class="field-help">Keeps natural phrase release.</div>
+        </div>
+        <div class="form-group">
+          <label title="Amplitude threshold used to detect silence at chunk edges. Lower is less aggressive.">Trim Threshold (dB)</label>
+          <input type="number" name="semantic_generated_trim_silence_thresh_db" value="{{ config.semantic_chunking.generated_trim.silence_thresh_db }}" min="-80" max="-20" step="1">
+          <div class="field-help">Silence detector threshold.</div>
+        </div>
+      </div>
     </div>
-    <div class="form-group">
-      <label>Weak start words</label>
-      <textarea name="semantic_weak_start_words" rows="3"
-        style="width:100%;background:#161b22;color:#e1e4e8;border:1px solid #30363d;border-radius:6px;padding:8px;font-family:monospace;font-size:13px;resize:vertical">{{ config.semantic_chunking.weak_start_words | join(', ') }}</textarea>
+
+    <div class="settings-group">
+      <div class="settings-group-header">
+        <h4>Punctuation Timing</h4>
+        <p>These weights add expected pause time to estimates. They influence split planning and generated frame targets.</p>
+      </div>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label title="Estimated pause for each comma.">Comma (s)</label>
+          <input type="number" name="semantic_punct_comma" value="{{ config.semantic_chunking.punctuation.comma }}" min="0" max="1" step="0.05">
+        </div>
+        <div class="form-group">
+          <label title="Estimated pause for sentence-ending punctuation.">Sentence (s)</label>
+          <input type="number" name="semantic_punct_sentence" value="{{ config.semantic_chunking.punctuation.sentence }}" min="0" max="1.5" step="0.05">
+        </div>
+        <div class="form-group">
+          <label title="Estimated pause for ellipsis.">Ellipsis (s)</label>
+          <input type="number" name="semantic_punct_ellipsis" value="{{ config.semantic_chunking.punctuation.ellipsis }}" min="0" max="2" step="0.05">
+        </div>
+        <div class="form-group">
+          <label title="Estimated pause for semicolon.">Semicolon (s)</label>
+          <input type="number" name="semantic_punct_semicolon" value="{{ config.semantic_chunking.punctuation.semicolon }}" min="0" max="1.5" step="0.05">
+        </div>
+        <div class="form-group">
+          <label title="Estimated pause for colon.">Colon (s)</label>
+          <input type="number" name="semantic_punct_colon" value="{{ config.semantic_chunking.punctuation.colon }}" min="0" max="1.5" step="0.05">
+        </div>
+        <div class="form-group">
+          <label title="Estimated pause for dash.">Dash (s)</label>
+          <input type="number" name="semantic_punct_dash" value="{{ config.semantic_chunking.punctuation.dash }}" min="0" max="1.5" step="0.05">
+        </div>
+      </div>
     </div>
+
+    <div class="settings-group">
+      <div class="settings-group-header">
+        <h4>Comma And Clause Handling</h4>
+        <p>Keeps short address phrases and weak subordinate starts from becoming isolated unnatural chunks.</p>
+      </div>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="comma_softening_enabled" value="1"
+              {% if config.semantic_chunking.comma_softening.enabled %}checked{% endif %}>
+            Soften Selected Commas
+          </label>
+          <div class="field-help">Avoids over-splitting some commas.</div>
+        </div>
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="comma_softening_vocative" value="1"
+              {% if config.semantic_chunking.comma_softening.vocative_enabled %}checked{% endif %}>
+            Vocative Starts
+          </label>
+          <div class="field-help">Example: <code>Утгерд, идем</code>.</div>
+        </div>
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="comma_softening_tail" value="1"
+              {% if config.semantic_chunking.comma_softening.decorative_tail_enabled %}checked{% endif %}>
+            Decorative Tails
+          </label>
+          <div class="field-help">Example: <code>..., блин!</code>.</div>
+        </div>
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="semantic_weak_start_merge_enabled" value="1"
+              {% if config.semantic_chunking.weak_start_merge_enabled %}checked{% endif %}>
+            Merge Weak Starts
+          </label>
+          <div class="field-help">Merges chunks starting with words like <code>хотя</code>.</div>
+        </div>
+        <div class="form-group">
+          <label title="Extra budget allowed when merging a weak-start chunk back into the previous chunk.">Weak Start Slack (s)</label>
+          <input type="number" name="semantic_weak_start_merge_slack_sec" value="{{ config.semantic_chunking.weak_start_merge_slack_sec }}" min="0" max="2" step="0.05">
+          <div class="field-help">Extra merge tolerance.</div>
+        </div>
+      </div>
+      <div class="settings-textareas">
+        <div class="form-group">
+          <label title="Comma-separated or newline-separated decorative tail words.">Decorative Tails</label>
+          <textarea name="semantic_decorative_tails" rows="3">{{ config.semantic_chunking.comma_softening.decorative_tails | join(', ') }}</textarea>
+          <div class="field-help">Words that should stay attached to the phrase before them.</div>
+        </div>
+        <div class="form-group">
+          <label title="Comma-separated or newline-separated words that should not usually start their own chunk.">Weak Start Words</label>
+          <textarea name="semantic_weak_start_words" rows="3">{{ config.semantic_chunking.weak_start_words | join(', ') }}</textarea>
+          <div class="field-help">Subordinate starts that are safer merged when budget allows.</div>
+        </div>
+      </div>
+    </div>
+
+    <details class="settings-group advanced-settings">
+      <summary>Advanced Runtime Quarantine</summary>
+      <p class="section-help">
+        Off by default. Runtime ref trimming can create text/audio mismatch. Prefer Prepare Reference on the character page.
+      </p>
+      <div class="settings-grid">
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="semantic_ref_tail_quarantine_enabled" value="1"
+              {% if config.semantic_chunking.ref_tail_quarantine_enabled %}checked{% endif %}>
+            Quarantine Short Ref Tail
+          </label>
+          <div class="field-help">Emergency runtime sentence removal.</div>
+        </div>
+        <div class="form-group">
+          <label class="switch-row">
+            <input type="checkbox" name="semantic_ref_tail_clause_quarantine_enabled" value="1"
+              {% if config.semantic_chunking.ref_tail_clause_quarantine_enabled %}checked{% endif %}>
+            Quarantine Ref Tail Clause
+          </label>
+          <div class="field-help">Emergency runtime final-clause removal.</div>
+        </div>
+        <div class="form-group">
+          <label title="Maximum unit length for a removable trailing sentence.">Tail Max Units</label>
+          <input type="number" name="semantic_ref_tail_max_units" value="{{ config.semantic_chunking.ref_tail_max_units }}" min="0" max="60" step="1">
+        </div>
+        <div class="form-group">
+          <label title="Silence length used to find audio tail boundaries.">Tail Silence (ms)</label>
+          <input type="number" name="semantic_ref_tail_min_silence_ms" value="{{ config.semantic_chunking.ref_tail_min_silence_ms }}" min="50" max="1000" step="50">
+        </div>
+        <div class="form-group">
+          <label title="Silence kept before the removed tail.">Tail Keep Silence (ms)</label>
+          <input type="number" name="semantic_ref_tail_keep_silence_ms" value="{{ config.semantic_chunking.ref_tail_keep_silence_ms }}" min="0" max="1000" step="50">
+        </div>
+        <div class="form-group">
+          <label title="Maximum audio duration removable from sentence-tail quarantine.">Tail Max Removed (ms)</label>
+          <input type="number" name="semantic_ref_tail_max_removed_ms" value="{{ config.semantic_chunking.ref_tail_max_removed_ms }}" min="0" max="8000" step="250">
+        </div>
+        <div class="form-group">
+          <label title="Minimum speed before final-clause quarantine can activate.">Clause Min Speed</label>
+          <input type="number" name="semantic_ref_tail_clause_min_speed" value="{{ config.semantic_chunking.ref_tail_clause_min_speed }}" min="1" max="3" step="0.05">
+        </div>
+        <div class="form-group">
+          <label title="Maximum unit length for a removable final clause.">Clause Max Units</label>
+          <input type="number" name="semantic_ref_tail_clause_max_units" value="{{ config.semantic_chunking.ref_tail_clause_max_units }}" min="0" max="80" step="1">
+        </div>
+        <div class="form-group">
+          <label title="Minimum remaining units required after removing a final clause.">Clause Min Remaining</label>
+          <input type="number" name="semantic_ref_tail_clause_min_remaining_units" value="{{ config.semantic_chunking.ref_tail_clause_min_remaining_units }}" min="0" max="120" step="1">
+        </div>
+        <div class="form-group">
+          <label title="Maximum audio duration removable from final-clause quarantine.">Clause Max Removed (ms)</label>
+          <input type="number" name="semantic_ref_tail_clause_max_removed_ms" value="{{ config.semantic_chunking.ref_tail_clause_max_removed_ms }}" min="0" max="10000" step="250">
+        </div>
+      </div>
+    </details>
   </div>
 
   <div class="config-section">

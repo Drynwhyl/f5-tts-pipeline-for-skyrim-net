@@ -26,6 +26,9 @@
   </div>
   <div class="emotion-actions">
     <a href="/character/{{ name }}/emotion/{{ e.name }}/edit" class="btn btn-secondary btn-sm">Edit</a>
+    <form method="POST" action="/character/{{ name }}/emotion/{{ e.name }}/prepare" style="display:inline">
+      <button type="submit" class="btn btn-secondary btn-sm">Prepare Reference</button>
+    </form>
     <button class="btn btn-danger btn-sm" onclick="confirmDeleteEmotion('{{ e.name }}')">Delete</button>
   </div>
 </div>

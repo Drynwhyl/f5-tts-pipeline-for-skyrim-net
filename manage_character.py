@@ -16,7 +16,8 @@ import shutil
 import argparse
 from pathlib import Path
 
-VOICES_DIR = Path(os.environ.get("F5_VOICES_DIR", "/home/drynw/models/f5-tts/voices"))
+BASE_DIR = Path(os.environ.get("F5_TTS_BASE_DIR", "/workspace/f5-tts")).expanduser()
+VOICES_DIR = Path(os.environ.get("F5_TTS_VOICES_DIR", os.environ.get("F5_VOICES_DIR", str(BASE_DIR / "voices")))).expanduser()
 
 
 def cmd_create(args):

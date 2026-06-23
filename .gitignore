@@ -7,6 +7,13 @@ __pycache__/
 
 # Voice data (user-generated)
 voices/
+ruaccent-data/
 
 # Temp
 /tmp/
+
+# Vast runtime output
+logs/
+backups/
+*.tar.zst
+*.tar.zst.sha256

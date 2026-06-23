@@ -21,10 +21,10 @@ logger = logging.getLogger("f5-tts-web")
 from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
 from semantic_infer import DEFAULT_SEMANTIC_CHUNKING, merge_semantic_config
 
-BASE_DIR = Path("/home/drynw/models/f5-tts")
-VOICES_DIR = BASE_DIR / "voices"
-CONFIG_PATH = BASE_DIR / "config.json"
-API_URL = "http://localhost:8000"
+BASE_DIR = Path(os.environ.get("F5_TTS_BASE_DIR", "/workspace/f5-tts")).expanduser()
+VOICES_DIR = Path(os.environ.get("F5_TTS_VOICES_DIR", os.environ.get("F5_VOICES_DIR", str(BASE_DIR / "voices")))).expanduser()
+CONFIG_PATH = Path(os.environ.get("F5_TTS_CONFIG_PATH", str(BASE_DIR / "config.json"))).expanduser()
+API_URL = os.environ.get("F5_TTS_API_URL", "http://localhost:8000")
 CORE_EMOTIONS = ["normal", "calm", "happy", "sad", "aggressive", "scared"]
 CLONED_VOICES_DIR_NAME = "_cloned"
 
@@ -121,6 +121,32 @@ def _normalize_audio_wrapper(audio_path: str):
     msg = normalize_loudness(audio_path, target_dbfs=target, spectral_penalty=sp)
     if msg:
         logger.info("Normalized '%s': %s", audio_path, msg)
+
+
+async def _transcribe_saved_audio(audio_path: Path) -> str:
+    try:
+        with audio_path.open("rb") as f:
+            files = {"audio": (audio_path.name, f, AUDIO_MIME.get(audio_path.suffix, "audio/wav"))}
+            data = {"language": "ru", "model": "turbo"}
+            async with httpx.AsyncClient(timeout=120) as client:
+                resp = await client.post(f"{API_URL}/v1/transcribe", files=files, data=data)
+                resp.raise_for_status()
+                return resp.json().get("text", "").strip()
+    except Exception as e:
+        logger.warning("Failed to transcribe saved audio '%s': %s", audio_path, e)
+        return ""
+
+
+async def _prepare_saved_reference(audio_path: Path, force_transcribe: bool = False) -> tuple[str, str]:
+    trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+    if trim_msg:
+        logger.info("Prepared ref trim for '%s': %s", audio_path, trim_msg)
+    _normalize_audio_wrapper(str(audio_path))
+
+    transcript = ""
+    if force_transcribe or trim_msg:
+        transcript = await _transcribe_saved_audio(audio_path)
+    return trim_msg, transcript
 
 
 def get_characters(type_filter: str = "all") -> list[dict]:
@@ -268,11 +294,10 @@ async def create_character(request: Request):
         audio_path = char_dir / f"{emotion}{ext}"
         with open(audio_path, "wb") as f:
             f.write(content)
-        trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+        trim_msg, transcript = await _prepare_saved_reference(audio_path)
         if trim_msg:
             trim_notice += f"{emotion}: {trim_msg}\n"
-        _normalize_audio_wrapper(str(audio_path))
-        ref_text = form.get(f"text_{emotion}", "").strip()
+        ref_text = transcript or form.get(f"text_{emotion}", "").strip()
         (char_dir / f"{emotion}.txt").write_text(ref_text)
         saved += 1
 
@@ -349,12 +374,15 @@ async def edit_emotion_submit(request: Request, name: str, emotion: str):
         content = await audio_file.read()
         with open(audio_path, "wb") as f:
             f.write(content)
-        trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+        trim_msg, transcript = await _prepare_saved_reference(audio_path)
         if trim_msg:
             logger.info("Edit trim for '%s/%s': %s", name, emotion, trim_msg)
-        _normalize_audio_wrapper(str(audio_path))
+    else:
+        transcript = ""
 
     ref_text = form.get("text", "").strip()
+    if transcript:
+        ref_text = transcript
     (char_dir / f"{emotion}.txt").write_text(ref_text)
 
     threading.Thread(target=_reload_api, daemon=True).start()
@@ -370,6 +398,45 @@ def delete_emotion(name: str, emotion: str):
                 f.unlink()
     threading.Thread(target=_reload_api, daemon=True).start()
     return RedirectResponse(url=f"/character/{name}", status_code=303)
+
+
+@app.post("/character/{name}/emotion/{emotion}/prepare")
+async def prepare_emotion_reference(request: Request, name: str, emotion: str):
+    char_dir = _find_char_dir(name)
+    audio_path = find_audio(char_dir, emotion) if char_dir else None
+    if not char_dir or not audio_path:
+        return templates.TemplateResponse(
+            "character_detail.html",
+            {
+                "request": request,
+                "name": name,
+                "emotions": get_character_emotions(name),
+                "message": {"type": "error", "text": f"Audio for '{name}/{emotion}' not found."},
+            },
+        )
+
+    trim_msg, transcript = await _prepare_saved_reference(audio_path, force_transcribe=True)
+    if transcript:
+        (char_dir / f"{emotion}.txt").write_text(transcript)
+    threading.Thread(target=_reload_api, daemon=True).start()
+
+    parts = ["Reference prepared."]
+    if trim_msg:
+        parts.append(trim_msg)
+    if transcript:
+        parts.append("Transcript refreshed.")
+    else:
+        parts.append("Transcription failed; existing text was not changed.")
+
+    return templates.TemplateResponse(
+        "character_detail.html",
+        {
+            "request": request,
+            "name": name,
+            "emotions": get_character_emotions(name),
+            "message": {"type": "success" if transcript else "error", "text": " ".join(parts)},
+        },
+    )
 
 
 @app.get("/character/{name}/emotion/new", response_class=HTMLResponse)
@@ -413,12 +480,11 @@ async def add_emotion_submit(request: Request, name: str):
     content = await audio_file.read()
     with open(audio_path, "wb") as f:
         f.write(content)
-    trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
+    trim_msg, transcript = await _prepare_saved_reference(audio_path)
     if trim_msg:
         logger.info("Add emotion trim for '%s/%s': %s", name, emotion, trim_msg)
-    _normalize_audio_wrapper(str(audio_path))
 
-    ref_text = form.get("text", "").strip()
+    ref_text = transcript or form.get("text", "").strip()
     (char_dir / f"{emotion}.txt").write_text(ref_text)
 
     threading.Thread(target=_reload_api, daemon=True).start()

@@ -1,7 +1,7 @@
 [Unit]
-Description=F5-TTS Gradio Web UI (Russian model)
-After=network-online.target
-Wants=network-online.target
+Description=F5-TTS Character Manager Web UI
+After=network-online.target f5-tts-api.service
+Wants=network-online.target f5-tts-api.service
 
 [Service]
 Type=simple
@@ -10,7 +10,8 @@ WorkingDirectory=/home/drynw/models/f5-tts
 Environment=PATH=/home/drynw/f5-tts-env/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 Environment=F5_TTS_BASE_DIR=/home/drynw/models/f5-tts
 Environment=F5_TTS_VENV=/home/drynw/f5-tts-env
-ExecStart=/home/drynw/f5-tts-env/bin/python3 /home/drynw/models/f5-tts/run_gradio.py --host 0.0.0.0 --port 7860
+Environment=F5_TTS_API_URL=http://localhost:8000
+ExecStart=/home/drynw/f5-tts-env/bin/python3 /home/drynw/models/f5-tts/web_ui.py
 Restart=on-failure
 RestartSec=10
 
