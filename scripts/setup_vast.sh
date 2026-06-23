@@ -50,3 +50,7 @@ if [[ ! -f "$F5_TTS_MODEL_DIR/model_last_inference.safetensors" || ! -f "$F5_TTS
 fi
 
 python "$F5_TTS_BASE_DIR/scripts/preflight.py" --skip-gpu-load
+
+if [[ "${F5_TTS_INSTALL_SERVICES:-0}" == "1" ]]; then
+  bash "$F5_TTS_BASE_DIR/scripts/install_vast_services.sh"
+fi

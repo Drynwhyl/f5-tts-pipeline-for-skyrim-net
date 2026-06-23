@@ -13,6 +13,19 @@ import cached_path as cp
 orig = cp.cached_path
 cp.cached_path = lambda p, *a, **kw: CKPT if "model_1250000" in str(p) else orig(p, *a, **kw)
 
+from f5_tts.infer import utils_infer
+
+_orig_load_model = utils_infer.load_model
+
+
+def _load_model_with_local_vocab(model_cls, model_cfg, ckpt_path, *args, **kwargs):
+    if str(ckpt_path) == CKPT and not kwargs.get("vocab_file"):
+        kwargs["vocab_file"] = VOCAB
+    return _orig_load_model(model_cls, model_cfg, ckpt_path, *args, **kwargs)
+
+
+utils_infer.load_model = _load_model_with_local_vocab
+
 os.environ["F5TTS_CKPT"] = CKPT
 os.environ["F5TTS_VOCAB"] = VOCAB
 os.environ["F5TTS_CFG"] = CFG
