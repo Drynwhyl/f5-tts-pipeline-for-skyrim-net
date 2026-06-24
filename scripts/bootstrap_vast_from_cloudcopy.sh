@@ -76,7 +76,7 @@ if [[ "${F5_TTS_SKIP_CLOUD_COPY:-0}" != "1" ]]; then
     output="$(vastai cloud copy \
       --api-key "$API_KEY" \
       --src "$CLOUD_SRC" \
-      --dst "$MIGRATION_DIR/" \
+      --dst "$INSTANCE_ID:$MIGRATION_DIR/" \
       --instance "$INSTANCE_ID" \
       --connection "$CONNECTION_ID" \
       --transfer "$TRANSFER" 2>&1)"

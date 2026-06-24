@@ -167,7 +167,7 @@ Optional Cloud Copy upload for Codex session backup:
 
 ```bash
 vastai cloud copy \
-  --src /workspace/cloudsync/codex/current/ \
+  --src <this instance id>:/workspace/cloudsync/codex/current/ \
   --dst /F5-TTS-Vast/codex/current/ \
   --instance <this instance id> \
   --connection <connection id> \
@@ -179,7 +179,7 @@ Optional restore on a future instance:
 ```bash
 vastai cloud copy \
   --src /F5-TTS-Vast/codex/current/ \
-  --dst /workspace/cloudsync/codex/current/ \
+  --dst <new instance id>:/workspace/cloudsync/codex/current/ \
   --instance <new instance id> \
   --connection <connection id> \
   --transfer "Cloud To Instance"
@@ -209,15 +209,16 @@ The helper prepares `/workspace/cloudsync/current/` and requests:
 
 ```bash
 vastai cloud copy \
-  --src /workspace/cloudsync/current/ \
+  --src <this instance id>:/workspace/cloudsync/current/ \
   --dst /F5-TTS-Vast/current/ \
   --instance <this instance id> \
   --connection <connection id> \
   --transfer "Instance To Cloud"
 ```
 
-For a first run, test the same command with `--dry-run` before uploading the
-large archive:
+For a first run, test the local command construction before uploading the large
+archive. This intentionally does not call Vast API because Vast CLI `--dry-run`
+has behaved like a real Cloud Copy request in practice:
 
 ```bash
 F5_TTS_CLOUD_COPY_DRY_RUN=1 ./scripts/upload_cloud_payload.sh

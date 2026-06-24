@@ -37,14 +37,24 @@ fi
 
 cmd=(vastai cloud copy
   --api-key "$API_KEY" \
-  --src "$CURRENT_DIR/" \
+  --src "$INSTANCE_ID:$CURRENT_DIR/" \
   --dst "$CLOUD_DST" \
   --instance "$INSTANCE_ID" \
   --connection "$CONNECTION_ID" \
   --transfer "$TRANSFER")
 
 if [[ "$DRY_RUN" == "1" ]]; then
-  cmd+=(--dry-run)
+  printf 'Dry-run only. Vast API was not called.\n'
+  printf 'Command that would run:\n'
+  redacted=("${cmd[@]}")
+  for i in "${!redacted[@]}"; do
+    if [[ "${redacted[$i]}" == "--api-key" && -n "${redacted[$((i + 1))]:-}" ]]; then
+      redacted[$((i + 1))]="<redacted>"
+    fi
+  done
+  printf '  %q' "${redacted[@]}"
+  printf '\n'
+  exit 0
 fi
 
 output="$("${cmd[@]}" 2>&1)"
