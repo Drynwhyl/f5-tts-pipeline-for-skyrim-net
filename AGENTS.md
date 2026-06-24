@@ -19,6 +19,15 @@ Current Vast paths and services:
 The older `~/...`, `systemd`, and NVIDIA L4 notes below describe the original GCP
 VM setup. On Vast, use `supervisorctl` and the `/workspace/...` paths above.
 
+Disposable Vast workflow:
+
+- Use Vast Cloud Copy, not hand-managed `rclone.conf`, for model/voice payloads.
+- On new instances, clone this repo and run `scripts/bootstrap_vast_from_cloudcopy.sh`.
+- Before destroying an instance, run `scripts/upload_cloud_payload.sh` after
+  pushing code.
+- Do not preserve `/workspace/f5-tts-env`, `.cache`, `.hf_home`, or
+  `f5-tts-cache`; these are rebuildable.
+
 ## Environment
 
 - Python venv: `~/f5-tts-env` — activate before running any python/pip commands

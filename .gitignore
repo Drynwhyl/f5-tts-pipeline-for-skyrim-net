@@ -15,5 +15,6 @@ ruaccent-data/
 # Vast runtime output
 logs/
 backups/
+/cloudsync/
 *.tar.zst
 *.tar.zst.sha256
