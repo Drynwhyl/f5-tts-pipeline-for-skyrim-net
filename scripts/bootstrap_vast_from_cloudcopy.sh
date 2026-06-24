@@ -6,7 +6,6 @@ MIGRATION_DIR="${F5_TTS_MIGRATION_DIR:-/workspace/migration}"
 CLOUD_SRC="${F5_TTS_CLOUD_SRC:-/F5-TTS-Vast/current/}"
 ARCHIVE="$MIGRATION_DIR/f5-tts-data.tar.zst"
 SHA="$MIGRATION_DIR/f5-tts-data.tar.zst.sha256"
-TRANSFER="${F5_TTS_CLOUD_RESTORE_TRANSFER:-Cloud To Instance}"
 TIMEOUT_SEC="${F5_TTS_CLOUD_COPY_TIMEOUT_SEC:-3600}"
 POLL_SEC="${F5_TTS_CLOUD_COPY_POLL_SEC:-10}"
 API_KEY="${VAST_API_KEY:-${VASTAI_API_KEY:-}}"
@@ -25,6 +24,27 @@ write_status() {
 }
 
 normalize_payload() {
+  local archive_base sha_base archive_nested sha_nested archive_tmp sha_tmp
+  archive_base="$(basename "$ARCHIVE")"
+  sha_base="$(basename "$SHA")"
+  archive_nested="$ARCHIVE/$archive_base"
+  sha_nested="$SHA/$sha_base"
+
+  # Vast copy treats destination paths as directories, so file-to-file copies
+  # arrive as <target>/<basename>. Flatten them before checksum validation.
+  if [[ -d "$ARCHIVE" && -f "$archive_nested" ]]; then
+    archive_tmp="$MIGRATION_DIR/.$archive_base.tmp.$$"
+    cp -f "$archive_nested" "$archive_tmp"
+    rm -rf "$ARCHIVE"
+    mv "$archive_tmp" "$ARCHIVE"
+  fi
+  if [[ -d "$SHA" && -f "$sha_nested" ]]; then
+    sha_tmp="$MIGRATION_DIR/.$sha_base.tmp.$$"
+    cp -f "$sha_nested" "$sha_tmp"
+    rm -rf "$SHA"
+    mv "$sha_tmp" "$SHA"
+  fi
+
   if [[ ! -f "$ARCHIVE" && -f "$MIGRATION_DIR/current/f5-tts-data.tar.zst" ]]; then
     cp -f "$MIGRATION_DIR/current/f5-tts-data.tar.zst" "$ARCHIVE"
   fi
@@ -71,22 +91,21 @@ if [[ "${F5_TTS_SKIP_CLOUD_COPY:-0}" != "1" ]]; then
       exit 1
     fi
 
-    write_status "Requesting Cloud Copy from \`$CLOUD_SRC\` to \`$MIGRATION_DIR/\`."
-    log "Requesting Cloud Copy restore for instance $INSTANCE_ID."
-    output="$(vastai cloud copy \
-      --api-key "$API_KEY" \
-      --src "$CLOUD_SRC" \
-      --dst "$INSTANCE_ID:$MIGRATION_DIR/" \
-      --instance "$INSTANCE_ID" \
-      --connection "$CONNECTION_ID" \
-      --transfer "$TRANSFER" 2>&1)"
-    status=$?
-    printf '%s\n' "$output"
-    if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
-      write_status "Cloud Copy request failed."
-      echo "Vast Cloud Copy request failed." >&2
-      exit 1
-    fi
+    write_status "Requesting Vast copy from \`$CLOUD_SRC\` to \`$MIGRATION_DIR/\`."
+    log "Requesting Vast copy restore for instance $INSTANCE_ID."
+    for filename in f5-tts-data.tar.zst f5-tts-data.tar.zst.sha256; do
+      output="$(vastai copy \
+        "drive.$CONNECTION_ID:${CLOUD_SRC%/}/$filename" \
+        "C.$INSTANCE_ID:$MIGRATION_DIR/$filename" \
+        --api-key "$API_KEY" 2>&1)"
+      status=$?
+      printf '%s\n' "$output"
+      if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
+        write_status "Vast copy request failed for $filename."
+        echo "Vast copy request failed for $filename." >&2
+        exit 1
+      fi
+    done
   fi
 fi
 

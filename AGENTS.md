@@ -21,14 +21,15 @@ VM setup. On Vast, use `supervisorctl` and the `/workspace/...` paths above.
 
 Disposable Vast workflow:
 
-- Use Vast Cloud Copy, not hand-managed `rclone.conf`, for model/voice payloads.
+- Use Vast `copy` with structured cloud endpoints, not hand-managed
+  `rclone.conf`, for model/voice payloads.
 - On new instances, the Vast template should run `scripts/onstart_vast.sh`, which
   clones the repo, configures GitHub auth, installs Codex into `/workspace`, and
   runs `scripts/bootstrap_vast_from_cloudcopy.sh`.
 - Before destroying an instance, run `scripts/upload_cloud_payload.sh` after
   pushing code.
 - After meaningful project work, commit and push to GitHub. If model, voices, or
-  `config.json` changed, also run Cloud Copy via `scripts/upload_cloud_payload.sh`.
+  `config.json` changed, also run `scripts/upload_cloud_payload.sh`.
 - Codex state lives under `/workspace/.codex`; use `scripts/backup_codex_state.sh`
   when session continuity matters. Do not assume the Codex app will sync remote
   instance sessions automatically.

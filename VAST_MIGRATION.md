@@ -4,7 +4,7 @@ This project is designed to run on disposable Vast.ai instances.
 
 - Code lives in GitHub.
 - Model, voices, and `config.json` live in a Google Drive folder connected to
-  Vast Cloud Copy.
+  Vast cloud storage.
 - The Vast instance is compute, not durable storage.
 - Do not sync all of `/workspace`; rebuild venv/cache on each cold start.
 
@@ -38,7 +38,7 @@ It intentionally excludes:
 
 ## Vast Template
 
-Use a separate Google Drive account/folder for Vast Cloud Copy, then create a
+Use a separate Google Drive account/folder for Vast cloud storage, then create a
 scoped Vast API key for the template.
 
 Required API key permission groups:
@@ -90,8 +90,8 @@ bash -lc 'curl -fsSL https://raw.githubusercontent.com/Drynwhyl/f5-tts-pipeline-
 
 The onstart script clones/pulls the repo, configures GitHub push credentials when
 `GITHUB_TOKEN` is set, installs Codex into `/workspace`, then runs
-`bootstrap_vast_from_cloudcopy.sh`. The bootstrap script runs `vastai cloud copy`
-from inside the new instance, waits for `/workspace/migration/f5-tts-data.tar.zst`,
+`bootstrap_vast_from_cloudcopy.sh`. The bootstrap script runs `vastai copy` from
+inside the new instance, waits for `/workspace/migration/f5-tts-data.tar.zst`,
 verifies the checksum, builds the venv, applies runtime patches, and installs
 supervisor/Caddy services.
 
@@ -163,30 +163,31 @@ private, trusted storage:
 CODEX_BACKUP_INCLUDE_AUTH=1 ./scripts/backup_codex_state.sh
 ```
 
-Optional Cloud Copy upload for Codex session backup:
+Optional Vast copy upload for Codex session backup:
 
 ```bash
-vastai cloud copy \
-  --src <this instance id>:/workspace/cloudsync/codex/current/ \
-  --dst /F5-TTS-Vast/codex/current/ \
-  --instance <this instance id> \
-  --connection <connection id> \
-  --transfer "Instance To Cloud"
+vastai copy \
+  C.<this instance id>:/workspace/cloudsync/codex/current/ \
+  drive.<connection id>:/F5-TTS-Vast/codex/current/
 ```
 
 Optional restore on a future instance:
 
 ```bash
-vastai cloud copy \
-  --src /F5-TTS-Vast/codex/current/ \
-  --dst <new instance id>:/workspace/cloudsync/codex/current/ \
-  --instance <new instance id> \
-  --connection <connection id> \
-  --transfer "Cloud To Instance"
+vastai copy \
+  drive.<connection id>:/F5-TTS-Vast/codex/current/codex-state.tar.zst \
+  C.<new instance id>:/workspace/cloudsync/codex/current/codex-state.tar.zst
+vastai copy \
+  drive.<connection id>:/F5-TTS-Vast/codex/current/codex-state.tar.zst.sha256 \
+  C.<new instance id>:/workspace/cloudsync/codex/current/codex-state.tar.zst.sha256
 
 cd /workspace/f5-tts
 ./scripts/restore_codex_state.sh
 ```
+
+Vast treats file destinations as directories for this copy mode, so restore may
+create `codex-state.tar.zst/codex-state.tar.zst`. Move the nested file up before
+running `restore_codex_state.sh` if doing this manually.
 
 ## First Cloud Upload
 
@@ -208,17 +209,13 @@ export VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id>
 The helper prepares `/workspace/cloudsync/current/` and requests:
 
 ```bash
-vastai cloud copy \
-  --src <this instance id>:/workspace/cloudsync/current/ \
-  --dst /F5-TTS-Vast/current/ \
-  --instance <this instance id> \
-  --connection <connection id> \
-  --transfer "Instance To Cloud"
+vastai copy \
+  C.<this instance id>:/workspace/cloudsync/current/ \
+  drive.<connection id>:/F5-TTS-Vast/current/
 ```
 
 For a first run, test the local command construction before uploading the large
-archive. This intentionally does not call Vast API because Vast CLI `--dry-run`
-has behaved like a real Cloud Copy request in practice:
+archive. This intentionally does not call Vast API:
 
 ```bash
 F5_TTS_CLOUD_COPY_DRY_RUN=1 ./scripts/upload_cloud_payload.sh
@@ -259,7 +256,7 @@ export VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id>
 ./scripts/backup_codex_state.sh   # optional, for Codex session continuity
 ```
 
-Destroy only after the Cloud Copy upload is complete and the code is pushed.
+Destroy only after the cloud upload is complete and the code is pushed.
 
 For a meaningful code/config change during normal work, the default close-out is:
 
@@ -279,9 +276,16 @@ other payload state changed.
 Cancel a stuck restore into an instance:
 
 ```bash
-vastai cancel copy <INSTANCE_ID>:/workspace/migration/
+vastai cancel copy C.<INSTANCE_ID>
 ```
 
-For stuck uploads to cloud storage, cancel from the Vast Cloud Copy UI. Then
-rerun the same bootstrap or upload command. If direction behavior looks
-ambiguous, run `vastai cloud copy ... --dry-run` first.
+For stuck uploads to cloud storage, cancel from the Vast Cloud Copy UI or try:
+
+```bash
+vastai cancel copy drive.<connection id>
+```
+
+Then rerun the same bootstrap or upload command. Prefer `vastai copy` with
+structured locations (`C.<instance>:/path`, `drive.<connection>:/path`) over
+`vastai cloud copy`; the latter accepted requests but produced empty transfers in
+testing on 2026-06-24.

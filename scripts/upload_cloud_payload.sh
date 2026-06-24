@@ -5,7 +5,6 @@ F5_TTS_BASE_DIR="${F5_TTS_BASE_DIR:-/workspace/f5-tts}"
 CLOUDSYNC_DIR="${F5_TTS_CLOUDSYNC_DIR:-/workspace/cloudsync}"
 CURRENT_DIR="$CLOUDSYNC_DIR/current"
 CLOUD_DST="${F5_TTS_CLOUD_DST:-/F5-TTS-Vast/current/}"
-TRANSFER="${F5_TTS_CLOUD_UPLOAD_TRANSFER:-Instance To Cloud}"
 DRY_RUN="${F5_TTS_CLOUD_COPY_DRY_RUN:-0}"
 API_KEY="${VAST_API_KEY:-${VASTAI_API_KEY:-}}"
 CONNECTION_ID="${VAST_CLOUD_CONNECTION_ID:-${F5_TTS_CLOUD_CONNECTION_ID:-}}"
@@ -35,13 +34,10 @@ fi
 
 "$F5_TTS_BASE_DIR/scripts/prepare_cloud_payload.sh"
 
-cmd=(vastai cloud copy
-  --api-key "$API_KEY" \
-  --src "$INSTANCE_ID:$CURRENT_DIR/" \
-  --dst "$CLOUD_DST" \
-  --instance "$INSTANCE_ID" \
-  --connection "$CONNECTION_ID" \
-  --transfer "$TRANSFER")
+cmd=(vastai copy
+  "C.$INSTANCE_ID:$CURRENT_DIR/" \
+  "drive.$CONNECTION_ID:$CLOUD_DST" \
+  --api-key "$API_KEY")
 
 if [[ "$DRY_RUN" == "1" ]]; then
   printf 'Dry-run only. Vast API was not called.\n'
@@ -65,8 +61,4 @@ if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceba
   exit 1
 fi
 
-if [[ "$DRY_RUN" == "1" ]]; then
-  echo "Cloud upload dry-run completed for instance $INSTANCE_ID -> $CLOUD_DST"
-else
-  echo "Cloud upload requested for instance $INSTANCE_ID -> $CLOUD_DST"
-fi
+echo "Cloud upload requested for instance $INSTANCE_ID -> $CLOUD_DST"
