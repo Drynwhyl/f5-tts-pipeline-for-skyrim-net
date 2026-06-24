@@ -64,6 +64,11 @@ F5_TTS_CLOUD_SRC=/F5-TTS-Vast/current/
 F5_TTS_CLOUD_DST=/F5-TTS-Vast/current/
 F5_TTS_BASE_DIR=/workspace/f5-tts
 F5_TTS_VENV=/workspace/f5-tts-env
+GITHUB_TOKEN=<fine-grained GitHub token with Contents read/write for this repo>
+GIT_USER_NAME=Drynwhyl
+GIT_USER_EMAIL=<optional Git email>
+INSTALL_CODEX=1
+CODEX_HOME=/workspace/.codex
 ```
 
 Expose these ports when creating the template:
@@ -80,21 +85,108 @@ Expose these ports when creating the template:
 Recommended onstart command:
 
 ```bash
-bash -lc 'set -euo pipefail
-cd /workspace
-if [ ! -d f5-tts/.git ]; then
-  git clone "${F5_TTS_REPO_URL:-https://github.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net.git}" f5-tts
-else
-  git -C f5-tts pull --ff-only
-fi
-cd /workspace/f5-tts
-./scripts/bootstrap_vast_from_cloudcopy.sh
-'
+bash -lc 'curl -fsSL https://raw.githubusercontent.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net/master/scripts/onstart_vast.sh | bash'
 ```
 
-The bootstrap script runs `vastai cloud copy` from inside the new instance,
-waits for `/workspace/migration/f5-tts-data.tar.zst`, verifies the checksum,
-builds the venv, applies runtime patches, and installs supervisor/Caddy services.
+The onstart script clones/pulls the repo, configures GitHub push credentials when
+`GITHUB_TOKEN` is set, installs Codex into `/workspace`, then runs
+`bootstrap_vast_from_cloudcopy.sh`. The bootstrap script runs `vastai cloud copy`
+from inside the new instance, waits for `/workspace/migration/f5-tts-data.tar.zst`,
+verifies the checksum, builds the venv, applies runtime patches, and installs
+supervisor/Caddy services.
+
+If the repo ever becomes private, the raw GitHub onstart URL will also need
+authentication. In that case paste the contents of `scripts/onstart_vast.sh`
+directly into the Vast template onstart field, or host a private bootstrap script
+somewhere the instance can read with a token.
+
+## GitHub Push From The Instance
+
+Create a fine-grained GitHub token scoped to this repository with:
+
+```text
+Contents: Read and write
+Metadata: Read
+```
+
+Add it to the Vast template environment as `GITHUB_TOKEN`. The token is consumed
+by `scripts/setup_github_auth.sh`, which writes a local `~/.git-credentials` entry
+inside the disposable container and keeps `origin` as the clean public HTTPS URL.
+
+Manual reconfiguration:
+
+```bash
+cd /workspace/f5-tts
+source /workspace/.env
+./scripts/setup_github_auth.sh
+git push origin master
+```
+
+Do not commit `.env`, `~/.git-credentials`, or any token value.
+
+## Codex On Vast
+
+The template uses `INSTALL_CODEX=1` by default. Codex is installed into:
+
+```text
+/workspace/.codex
+/workspace/bin/codex
+```
+
+`/workspace/.env` gets:
+
+```bash
+export PATH="/workspace/bin:$PATH"
+export CODEX_HOME="/workspace/.codex"
+```
+
+This avoids installing Codex only into a transient home-local location. To install
+or repair it manually:
+
+```bash
+cd /workspace/f5-tts
+./scripts/install_codex_workspace.sh
+```
+
+Codex session persistence between different remote instances is not assumed.
+Treat `/workspace/.codex` as local state. Backup session/log state when useful:
+
+```bash
+cd /workspace/f5-tts
+./scripts/backup_codex_state.sh
+```
+
+By default `auth.json` is excluded from the Codex backup. Include it only for
+private, trusted storage:
+
+```bash
+CODEX_BACKUP_INCLUDE_AUTH=1 ./scripts/backup_codex_state.sh
+```
+
+Optional Cloud Copy upload for Codex session backup:
+
+```bash
+vastai cloud copy \
+  --src /workspace/cloudsync/codex/current/ \
+  --dst /F5-TTS-Vast/codex/current/ \
+  --instance <this instance id> \
+  --connection <connection id> \
+  --transfer "Instance To Cloud"
+```
+
+Optional restore on a future instance:
+
+```bash
+vastai cloud copy \
+  --src /F5-TTS-Vast/codex/current/ \
+  --dst /workspace/cloudsync/codex/current/ \
+  --instance <new instance id> \
+  --connection <connection id> \
+  --transfer "Cloud To Instance"
+
+cd /workspace/f5-tts
+./scripts/restore_codex_state.sh
+```
 
 ## First Cloud Upload
 
@@ -163,9 +255,23 @@ git push origin master
 export VAST_API_KEY=<scoped Vast API key>
 export VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id>
 ./scripts/upload_cloud_payload.sh
+./scripts/backup_codex_state.sh   # optional, for Codex session continuity
 ```
 
 Destroy only after the Cloud Copy upload is complete and the code is pushed.
+
+For a meaningful code/config change during normal work, the default close-out is:
+
+```bash
+cd /workspace/f5-tts
+git status --short --branch
+git add <changed files>
+git commit -m "<short useful summary>"
+git push origin master
+```
+
+Run `./scripts/upload_cloud_payload.sh` too when model, voices, `config.json`, or
+other payload state changed.
 
 ## Cancel / Retry
 

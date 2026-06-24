@@ -16,5 +16,6 @@ ruaccent-data/
 logs/
 backups/
 /cloudsync/
+.codex-backups/
 *.tar.zst
 *.tar.zst.sha256
