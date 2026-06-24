@@ -58,7 +58,7 @@ Template environment:
 
 ```bash
 VAST_API_KEY=<scoped Vast API key>
-VAST_CLOUD_CONNECTION_ID=<Google Drive connection id from vastai show connections>
+VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id from vastai show connections>
 F5_TTS_REPO_URL=https://github.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net.git
 F5_TTS_CLOUD_SRC=/F5-TTS-Vast/current/
 F5_TTS_CLOUD_DST=/F5-TTS-Vast/current/
@@ -109,7 +109,7 @@ Then upload the stable payload using the helper:
 
 ```bash
 export VAST_API_KEY=<scoped Vast API key>
-export VAST_CLOUD_CONNECTION_ID=<Google Drive connection id>
+export VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id>
 ./scripts/upload_cloud_payload.sh
 ```
 
@@ -161,7 +161,7 @@ cd /workspace/f5-tts
 git status --short --branch
 git push origin master
 export VAST_API_KEY=<scoped Vast API key>
-export VAST_CLOUD_CONNECTION_ID=<Google Drive connection id>
+export VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id>
 ./scripts/upload_cloud_payload.sh
 ```
 

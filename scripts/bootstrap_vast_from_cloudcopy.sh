@@ -61,6 +61,11 @@ if [[ "${F5_TTS_SKIP_CLOUD_COPY:-0}" != "1" ]]; then
       echo "Set VAST_CLOUD_CONNECTION_ID to the Google Drive cloud connection id." >&2
       exit 1
     fi
+    if [[ ! "$CONNECTION_ID" =~ ^[0-9]+$ ]]; then
+      echo "VAST_CLOUD_CONNECTION_ID must be the numeric id from 'vastai show connections', not the connection name." >&2
+      echo "Current value: $CONNECTION_ID" >&2
+      exit 1
+    fi
     if [[ -z "$INSTANCE_ID" ]]; then
       echo "Could not determine this Vast instance id. Set VAST_INSTANCE_ID." >&2
       exit 1
@@ -68,13 +73,20 @@ if [[ "${F5_TTS_SKIP_CLOUD_COPY:-0}" != "1" ]]; then
 
     write_status "Requesting Cloud Copy from \`$CLOUD_SRC\` to \`$MIGRATION_DIR/\`."
     log "Requesting Cloud Copy restore for instance $INSTANCE_ID."
-    vastai cloud copy \
+    output="$(vastai cloud copy \
       --api-key "$API_KEY" \
       --src "$CLOUD_SRC" \
       --dst "$MIGRATION_DIR/" \
       --instance "$INSTANCE_ID" \
       --connection "$CONNECTION_ID" \
-      --transfer "$TRANSFER"
+      --transfer "$TRANSFER" 2>&1)"
+    status=$?
+    printf '%s\n' "$output"
+    if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
+      write_status "Cloud Copy request failed."
+      echo "Vast Cloud Copy request failed." >&2
+      exit 1
+    fi
   fi
 fi
 

@@ -23,6 +23,11 @@ if [[ -z "$CONNECTION_ID" ]]; then
   echo "Set VAST_CLOUD_CONNECTION_ID to the Google Drive cloud connection id." >&2
   exit 1
 fi
+if [[ ! "$CONNECTION_ID" =~ ^[0-9]+$ ]]; then
+  echo "VAST_CLOUD_CONNECTION_ID must be the numeric id from 'vastai show connections', not the connection name." >&2
+  echo "Current value: $CONNECTION_ID" >&2
+  exit 1
+fi
 if [[ -z "$INSTANCE_ID" ]]; then
   echo "Could not determine this Vast instance id. Set VAST_INSTANCE_ID." >&2
   exit 1
@@ -42,6 +47,16 @@ if [[ "$DRY_RUN" == "1" ]]; then
   cmd+=(--dry-run)
 fi
 
-"${cmd[@]}"
+output="$("${cmd[@]}" 2>&1)"
+status=$?
+printf '%s\n' "$output"
+if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
+  echo "Vast Cloud Copy request failed." >&2
+  exit 1
+fi
 
-echo "Cloud upload requested for instance $INSTANCE_ID -> $CLOUD_DST"
+if [[ "$DRY_RUN" == "1" ]]; then
+  echo "Cloud upload dry-run completed for instance $INSTANCE_ID -> $CLOUD_DST"
+else
+  echo "Cloud upload requested for instance $INSTANCE_ID -> $CLOUD_DST"
+fi
