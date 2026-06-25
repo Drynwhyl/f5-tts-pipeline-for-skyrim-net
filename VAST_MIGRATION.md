@@ -57,17 +57,21 @@ Required API key permission groups:
 Template environment:
 
 ```bash
+PROVISIONING_SCRIPT=https://raw.githubusercontent.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net/master/scripts/provision_vast.sh
 VAST_API_KEY=<scoped Vast API key>
 VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id from vastai show connections>
 F5_TTS_REPO_URL=https://github.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net.git
 F5_TTS_CLOUD_SRC=/F5-TTS-Vast/current/
 F5_TTS_CLOUD_DST=/F5-TTS-Vast/current/
+CODEX_CLOUD_SRC=/F5-TTS-Vast/codex/current/
+CODEX_CLOUD_DST=/F5-TTS-Vast/codex/current/
 F5_TTS_BASE_DIR=/workspace/f5-tts
 F5_TTS_VENV=/workspace/f5-tts-env
 GITHUB_TOKEN=<fine-grained GitHub token with Contents read/write for this repo>
 GIT_USER_NAME=Drynwhyl
 GIT_USER_EMAIL=<optional Git email>
 INSTALL_CODEX=1
+RESTORE_CODEX=1
 CODEX_HOME=/workspace/.codex
 ```
 
@@ -82,23 +86,31 @@ Expose these ports when creating the template:
 10200  F5-TTS Web via Caddy
 ```
 
-Recommended onstart command:
+Recommended startup setup:
+
+- Leave Startup Scripts / onstart empty.
+- Do not put `entrypoint.sh` into Startup Scripts.
+- Set `PROVISIONING_SCRIPT` in the template environment as shown above.
+
+Fallback if the UI only gives a Startup Scripts box:
 
 ```bash
-bash -lc 'curl -fsSL https://raw.githubusercontent.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net/master/scripts/onstart_vast.sh | bash'
+touch ~/.no_auto_tmux
+bash -lc 'curl -fsSL https://raw.githubusercontent.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net/master/scripts/provision_vast.sh | bash'
 ```
 
-The onstart script clones/pulls the repo, configures GitHub push credentials when
-`GITHUB_TOKEN` is set, installs Codex into `/workspace`, then runs
+The provisioning script clones/pulls the repo, configures GitHub push
+credentials when `GITHUB_TOKEN` is set, installs Codex into `/workspace`,
+restores Codex state when available, then runs
 `bootstrap_vast_from_cloudcopy.sh`. The bootstrap script runs `vastai copy` from
-inside the new instance, waits for `/workspace/migration/f5-tts-data.tar.zst`,
-verifies the checksum, builds the venv, applies runtime patches, and installs
-supervisor/Caddy services.
+inside the new instance, waits for stable files under
+`/workspace/migration/incoming/`, verifies the checksum, builds the venv, applies
+runtime patches, and installs supervisor/Caddy services.
 
 If the repo ever becomes private, the raw GitHub onstart URL will also need
-authentication. In that case paste the contents of `scripts/onstart_vast.sh`
-directly into the Vast template onstart field, or host a private bootstrap script
-somewhere the instance can read with a token.
+authentication. In that case paste the contents of `scripts/provision_vast.sh`
+directly into the Vast provisioning/startup field, or host a private bootstrap
+script somewhere the instance can read with a token.
 
 ## GitHub Push From The Instance
 
@@ -149,11 +161,12 @@ cd /workspace/f5-tts
 ```
 
 Codex session persistence between different remote instances is not assumed.
-Treat `/workspace/.codex` as local state. Backup session/log state when useful:
+Treat `/workspace/.codex` as local state. Backup session/log state before
+destroying an instance:
 
 ```bash
 cd /workspace/f5-tts
-./scripts/backup_codex_state.sh
+./scripts/upload_codex_state.sh
 ```
 
 By default `auth.json` is excluded from the Codex backup. Include it only for
@@ -163,12 +176,10 @@ private, trusted storage:
 CODEX_BACKUP_INCLUDE_AUTH=1 ./scripts/backup_codex_state.sh
 ```
 
-Optional Vast copy upload for Codex session backup:
+Manual local-only Codex backup, without uploading to Drive:
 
 ```bash
-vastai copy \
-  C.<this instance id>:/workspace/cloudsync/codex/current/ \
-  drive.<connection id>:/F5-TTS-Vast/codex/current/
+./scripts/backup_codex_state.sh
 ```
 
 Optional restore on a future instance:
@@ -223,12 +234,14 @@ F5_TTS_CLOUD_COPY_DRY_RUN=1 ./scripts/upload_cloud_payload.sh
 
 ## Fresh Instance Restore
 
-If the template onstart is configured, no manual restore is needed. Rent the
-instance and wait for bootstrap to complete.
+If `PROVISIONING_SCRIPT` is configured, no manual restore is needed. Rent the
+instance and wait for provisioning/bootstrap to complete.
 
 Check progress:
 
 ```bash
+tail -f /var/log/portal/provisioning.log
+tail -f /workspace/bootstrap.log
 cat /workspace/migration/bootstrap-status.md
 tail -f /var/log/portal/f5-tts-api.log
 supervisorctl status f5-tts-api f5-tts-web f5-tts-gradio caddy
@@ -253,7 +266,7 @@ git push origin master
 export VAST_API_KEY=<scoped Vast API key>
 export VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id>
 ./scripts/upload_cloud_payload.sh
-./scripts/backup_codex_state.sh   # optional, for Codex session continuity
+./scripts/upload_codex_state.sh
 ```
 
 Destroy only after the cloud upload is complete and the code is pushed.
