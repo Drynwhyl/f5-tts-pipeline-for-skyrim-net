@@ -9,8 +9,10 @@ import shutil
 import tempfile
 import logging
 import mimetypes
+import wave
+import threading
 from pathlib import Path
-from typing import Optional, List
+from typing import Callable, Optional, TypeVar, List
 
 import torch
 import torchaudio
@@ -21,6 +23,8 @@ from fastapi import FastAPI, HTTPException, UploadFile, File, Form, Body
 from fastapi.responses import Response, FileResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
+from starlette.requests import ClientDisconnect
 
 from transformers import pipeline as hf_pipeline
 
@@ -37,6 +41,7 @@ from unknown_emotions import default_unknown_emotions_path, record_unknown_emoti
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("f5-tts-api")
+T = TypeVar("T")
 
 BASE_DIR = Path(os.environ.get("F5_TTS_BASE_DIR", "/workspace/f5-tts")).expanduser()
 MODEL_DIR = Path(os.environ.get("F5_TTS_MODEL_DIR", str(BASE_DIR / "F5TTS_v1_Base_v2"))).expanduser()
@@ -64,6 +69,7 @@ app.add_middleware(
 
 @app.middleware("http")
 async def log_requests(request, call_next):
+    started = time.perf_counter()
     body = None
     content_type = request.headers.get("content-type", "")
     is_multipart = "multipart" in content_type
@@ -80,15 +86,31 @@ async def log_requests(request, call_next):
         body or "(multipart or empty)",
     )
 
-    response = await call_next(request)
+    try:
+        response = await call_next(request)
+    except ClientDisconnect:
+        elapsed = (time.perf_counter() - started) * 1000
+        logger.warning(
+            "xxx %s %s client disconnected after %.1fms",
+            request.method, request.url.path, elapsed,
+        )
+        raise
+    except Exception:
+        elapsed = (time.perf_counter() - started) * 1000
+        logger.exception(
+            "xxx %s %s failed after %.1fms",
+            request.method, request.url.path, elapsed,
+        )
+        raise
 
     resp_body = b""
     async for chunk in response.body_iterator:
         resp_body += chunk
 
+    elapsed = (time.perf_counter() - started) * 1000
     logger.info(
-        "<<< %s %s -> %s\n    body: %s",
-        request.method, request.url.path, response.status_code,
+        "<<< %s %s -> %s in %.1fms\n    body: %s",
+        request.method, request.url.path, response.status_code, elapsed,
         resp_body[:500].decode("utf-8", errors="replace"),
     )
 
@@ -132,6 +154,9 @@ app_emotion_map: dict[str, str] = {}
 accentor: Optional[RUAccent] = None
 whisper_pipelines: dict[str, any] = {}
 DEFAULT_NFE_STEP = 64
+_gpu_condition = threading.Condition()
+_gpu_active = False
+_pending_stt = 0
 
 WHISPER_MODELS = {
     "turbo": "openai/whisper-large-v3-turbo",
@@ -153,6 +178,37 @@ def _get_whisper_pipeline(model: str):
         )
         logger.info("Whisper '%s' loaded", model)
     return whisper_pipelines[model]
+
+
+def _run_gpu_task(kind: str, fn: Callable[[], T]) -> T:
+    global _gpu_active, _pending_stt
+
+    wait_started = time.perf_counter()
+    with _gpu_condition:
+        if kind == "stt":
+            _pending_stt += 1
+        try:
+            while _gpu_active or (kind != "stt" and _pending_stt > 0):
+                _gpu_condition.wait()
+            if kind == "stt":
+                _pending_stt -= 1
+            _gpu_active = True
+        except Exception:
+            if kind == "stt":
+                _pending_stt = max(0, _pending_stt - 1)
+            _gpu_condition.notify_all()
+            raise
+
+    waited_ms = (time.perf_counter() - wait_started) * 1000
+    if waited_ms > 50:
+        logger.info("GPU scheduler: %s waited %.1fms", kind, waited_ms)
+
+    try:
+        return fn()
+    finally:
+        with _gpu_condition:
+            _gpu_active = False
+            _gpu_condition.notify_all()
 
 
 def _apply_stress(text: str) -> str:
@@ -217,6 +273,33 @@ def _transcribe_audio_file(audio_path: str) -> str:
     except Exception as e:
         logger.warning("Transcription failed for '%s': %s", audio_path, e)
         return ""
+
+
+def _run_whisper_transcription(audio_path: str, model: str, language: Optional[str]) -> tuple[dict, float]:
+    def _infer():
+        pipe = _get_whisper_pipeline(model)
+        torch.cuda.synchronize() if "cuda" in device else None
+        started = time.perf_counter()
+        result = pipe(
+            audio_path,
+            return_timestamps=False,
+            generate_kwargs={"task": "transcribe", "language": language} if language else {"task": "transcribe"},
+        )
+        torch.cuda.synchronize() if "cuda" in device else None
+        elapsed = (time.perf_counter() - started) * 1000
+        return result, elapsed
+
+    return _run_gpu_task("stt", _infer)
+
+
+def _wav_duration_s(content: bytes) -> Optional[float]:
+    try:
+        with wave.open(io.BytesIO(content), "rb") as wav:
+            frames = wav.getnframes()
+            rate = wav.getframerate()
+            return frames / rate if rate else None
+    except Exception:
+        return None
 
 
 def _transcribe_empty_refs():
@@ -595,7 +678,10 @@ def _tts_infer(ref_audio_path: str, ref_text: str, gen_text: str, speed: Optiona
             logger.info("Ref guard silence appended: %dms", guard_ms)
 
     infer_fn = infer_process_semantic if use_semantic else infer_process
-    kwargs = {"semantic_config": semantic_cfg} if use_semantic else {}
+    kwargs = {
+        "semantic_config": semantic_cfg,
+        "gpu_task_runner": lambda fn: _run_gpu_task("tts", fn),
+    } if use_semantic else {}
     try:
         out_wave, sr, _ = infer_fn(
             ref_audio=ref_audio_processed,
@@ -1009,8 +1095,6 @@ async def transcribe_audio(
     if model not in WHISPER_MODELS:
         raise HTTPException(status_code=400, detail=f"Unknown model '{model}', choose from {list(WHISPER_MODELS.keys())}")
 
-    pipe = _get_whisper_pipeline(model)
-
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     try:
         tmp.write(await audio.read())
@@ -1023,18 +1107,14 @@ async def transcribe_audio(
             ).decode().strip()
         )
 
-        torch.cuda.synchronize() if "cuda" in device else None
-        t0 = time.perf_counter()
-        result = pipe(
-            tmp.name,
-            return_timestamps=False,
-            generate_kwargs={"task": "transcribe", "language": language} if language else {"task": "transcribe"},
-        )
-        torch.cuda.synchronize() if "cuda" in device else None
-        elapsed = (time.perf_counter() - t0) * 1000
+        result, elapsed = await run_in_threadpool(_run_whisper_transcription, tmp.name, model, language)
 
         text = result["text"].strip()
         detected_lang = result.get("chunks", [{}])[0].get("language", "") if result.get("chunks") else ""
+        logger.info(
+            "STT /v1/transcribe model=%s language=%s audio=%.2fs inference=%.1fms text_len=%d",
+            model, language or "", audio_dur, elapsed, len(text),
+        )
 
         return {
             "text": text,
@@ -1061,20 +1141,18 @@ async def openai_transcriptions(
     if not whisper_model:
         raise HTTPException(status_code=400, detail=f"Unknown model '{model}', use 'whisper-1', 'turbo', or 'large'")
 
-    pipe = _get_whisper_pipeline(whisper_model)
-
     tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
     try:
-        tmp.write(await file.read())
+        audio_bytes = await file.read()
+        tmp.write(audio_bytes)
         tmp.close()
 
-        torch.cuda.synchronize() if "cuda" in device else None
-        result = pipe(
-            tmp.name,
-            return_timestamps=False,
-            generate_kwargs={"task": "transcribe", "language": language} if language else {"task": "transcribe"},
-        )
+        result, elapsed = await run_in_threadpool(_run_whisper_transcription, tmp.name, whisper_model, language)
         text = result["text"].strip()
+        logger.info(
+            "STT /v1/audio/transcriptions model=%s mapped_model=%s language=%s bytes=%d inference=%.1fms text_len=%d",
+            model, whisper_model, language or "", len(audio_bytes), elapsed, len(text),
+        )
         return {"text": text}
     finally:
         os.unlink(tmp.name)
@@ -1127,7 +1205,26 @@ async def tts_to_audio(request: StarRequest):
         save_ref = str(Path(ref_audio_path).with_suffix(".txt")) if ref_audio_path.startswith(VOICES_DIR) else None
         speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text, 1.0)
         speed = _apply_voice_speed_override(Path(speaker_wav).stem, speed)
-        content, _ = _tts_infer(ref_audio_path, ref_text, gen_text, speed, save_ref_text_to=save_ref)
+        infer_started = time.perf_counter()
+        content, _ = await run_in_threadpool(
+            _tts_infer,
+            ref_audio_path,
+            ref_text,
+            gen_text,
+            speed,
+            save_ref_text_to=save_ref,
+        )
+        infer_elapsed = (time.perf_counter() - infer_started) * 1000
+        audio_duration = _wav_duration_s(content)
+        logger.info(
+            "TTS /tts_to_audio json voice=%s language=%s text_len=%d bytes=%d audio=%.2fs inference=%.1fms",
+            speaker_wav,
+            language,
+            len(gen_text),
+            len(content),
+            audio_duration if audio_duration is not None else -1,
+            infer_elapsed,
+        )
 
         if save_path:
             save_dir = CACHE_DIR
@@ -1177,7 +1274,26 @@ async def tts_to_audio(request: StarRequest):
             speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text, 1.0)
             voice_name = Path(speaker_name).stem if speaker_name else ""
             speed = _apply_voice_speed_override(voice_name, speed)
-            content, _ = _tts_infer(ref_audio_path, ref_text, gen_text, speed, save_ref_text_to=save_ref)
+            infer_started = time.perf_counter()
+            content, _ = await run_in_threadpool(
+                _tts_infer,
+                ref_audio_path,
+                ref_text,
+                gen_text,
+                speed,
+                save_ref_text_to=save_ref,
+            )
+            infer_elapsed = (time.perf_counter() - infer_started) * 1000
+            audio_duration = _wav_duration_s(content)
+            logger.info(
+                "TTS /tts_to_audio form voice=%s language=%s text_len=%d bytes=%d audio=%.2fs inference=%.1fms",
+                voice_name or speaker_name or "",
+                language,
+                len(gen_text),
+                len(content),
+                audio_duration if audio_duration is not None else -1,
+                infer_elapsed,
+            )
         finally:
             if cleanup_tmp:
                 os.unlink(ref_audio_path)

@@ -1,5 +1,4 @@
 import re
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any
 
@@ -212,6 +211,7 @@ def infer_process_semantic(
     speed=default_speed,
     fix_duration=default_fix_duration,
     device=None,
+    gpu_task_runner=None,
 ):
     audio, sr = torchaudio.load(ref_audio)
     ref_duration_sec = audio.shape[-1] / sr
@@ -248,6 +248,7 @@ def infer_process_semantic(
             fix_duration=fix_duration,
             device=device,
             semantic_config=semantic_config,
+            gpu_task_runner=gpu_task_runner,
         )
     )
 
@@ -269,6 +270,7 @@ def _infer_batch_process_semantic(
     fix_duration=None,
     device=None,
     semantic_config=None,
+    gpu_task_runner=None,
 ):
     cfg = merge_semantic_config(semantic_config)
     audio, sr = ref_audio
@@ -304,40 +306,43 @@ def _infer_batch_process_semantic(
             extra_frames = int(chunk["extra_frames"] / local_speed)
             duration = ref_audio_len + extra_frames
 
-        with torch.inference_mode():
-            generated, _ = model_obj.sample(
-                cond=audio,
-                text=final_text_list,
-                duration=duration,
-                steps=nfe_step,
-                cfg_strength=cfg_strength,
-                sway_sampling_coef=sway_sampling_coef,
-            )
-            del _
-            generated = generated.to(torch.float32)
-            generated = generated[:, ref_audio_len:, :]
-            generated = generated.permute(0, 2, 1)
-            if mel_spec_type == "vocos":
-                generated_wave = vocoder.decode(generated)
-            else:
-                generated_wave = vocoder(generated)
-            if rms < target_rms:
-                generated_wave = generated_wave * rms / target_rms
-            generated_wave = generated_wave.squeeze().cpu().numpy()
-            generated_wave = _trim_generated_edges(generated_wave, target_sample_rate, cfg)
+        def _infer_gpu():
+            with torch.inference_mode():
+                generated, _ = model_obj.sample(
+                    cond=audio,
+                    text=final_text_list,
+                    duration=duration,
+                    steps=nfe_step,
+                    cfg_strength=cfg_strength,
+                    sway_sampling_coef=sway_sampling_coef,
+                )
+                del _
+                generated = generated.to(torch.float32)
+                generated = generated[:, ref_audio_len:, :]
+                generated = generated.permute(0, 2, 1)
+                if mel_spec_type == "vocos":
+                    generated_wave = vocoder.decode(generated)
+                else:
+                    generated_wave = vocoder(generated)
+                if rms < target_rms:
+                    generated_wave = generated_wave * rms / target_rms
+                generated_wave = generated_wave.squeeze().cpu().numpy()
+                generated_wave = _trim_generated_edges(generated_wave, target_sample_rate, cfg)
+                generated_cpu = generated[0].cpu().numpy()
+                del generated
+                return generated_wave, generated_cpu
 
-        generated_cpu = generated[0].cpu().numpy()
-        del generated
-        return generated_wave, generated_cpu
+        if gpu_task_runner is not None:
+            return gpu_task_runner(_infer_gpu)
+        return _infer_gpu()
 
-    with ThreadPoolExecutor() as executor:
-        futures = [executor.submit(_infer_basic, chunk) for chunk in chunk_plans]
-        for future in progress.tqdm(futures) if progress is not None else futures:
-            result = future.result()
-            if result:
-                generated_wave, generated_mel_spec = result
-                generated_waves.append(generated_wave)
-                spectrograms.append(generated_mel_spec)
+    items = progress.tqdm(chunk_plans) if progress is not None else chunk_plans
+    for chunk in items:
+        result = _infer_basic(chunk)
+        if result:
+            generated_wave, generated_mel_spec = result
+            generated_waves.append(generated_wave)
+            spectrograms.append(generated_mel_spec)
 
     if not generated_waves:
         yield None, target_sample_rate, None

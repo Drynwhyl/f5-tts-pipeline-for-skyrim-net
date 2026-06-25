@@ -71,7 +71,11 @@
     "normalize_on_the_fly": true,
     "spectral_penalty": true
   },
-  "custom_accent_dict": {},
+  "custom_accent_dict": {
+    "пиздить": "п+издтить",
+    "пиздит": "пизд+ит",
+    "обливион": "обл+ивион"
+  },
   "fix_gen_text": {
     "sentence_case": true,
     "terminal_punctuation": true
@@ -99,7 +103,7 @@
     "ref_tail_clause_min_remaining_units": 35,
     "ref_tail_clause_max_removed_ms": 5500,
     "weak_start_merge_enabled": true,
-    "weak_start_merge_slack_sec": 0.35,
+    "weak_start_merge_slack_sec": 0.5,
     "weak_start_words": [
       "хотя",
       "что",
@@ -132,6 +136,7 @@
       "vocative_enabled": true,
       "decorative_tail_enabled": true,
       "decorative_tails": [
+        "блять",
         "блин",
         "черт",
         "чёрт",
