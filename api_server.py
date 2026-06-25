@@ -33,6 +33,7 @@ from f5_tts.infer.utils_infer import (
 )
 from semantic_infer import DEFAULT_SEMANTIC_CHUNKING, build_chunk_plan, infer_process_semantic, merge_semantic_config
 from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
+from unknown_emotions import default_unknown_emotions_path, record_unknown_emotion
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("f5-tts-api")
@@ -43,6 +44,7 @@ MODEL_PATH = os.environ.get("F5_TTS_MODEL_PATH", str(MODEL_DIR / "model_last_inf
 VOCAB_PATH = os.environ.get("F5_TTS_VOCAB_PATH", str(MODEL_DIR / "vocab.txt"))
 VOICES_DIR = os.environ.get("F5_TTS_VOICES_DIR", os.environ.get("F5_VOICES_DIR", str(BASE_DIR / "voices")))
 CONFIG_PATH = os.environ.get("F5_TTS_CONFIG_PATH", str(BASE_DIR / "config.json"))
+UNKNOWN_EMOTIONS_PATH = default_unknown_emotions_path(CONFIG_PATH)
 CACHE_DIR = Path(os.environ.get("F5_TTS_CACHE_DIR", "/workspace/f5-tts-cache")).expanduser()
 RUACCENT_WORKDIR = os.environ.get("F5_TTS_RUACCENT_DIR", str(BASE_DIR / "ruaccent-data"))
 CLONED_VOICES_DIR_NAME = "_cloned"
@@ -907,6 +909,8 @@ def text_to_speech(req: TTSRequest):
     tag_cfg = app_config.get("emotion_tag", {"open": "[", "close": "]"})
     emotion, gen_text_clean = parse_emotion_tag(req.input, tag_cfg["open"], tag_cfg["close"])
     if emotion:
+        if record_unknown_emotion(UNKNOWN_EMOTIONS_PATH, emotion, app_config, voice=req.voice, input_text=req.input):
+            logger.warning("Queued unknown emotion alias '%s' for review", emotion)
         emotion = app_emotion_map.get(emotion, emotion)
 
     ref_audio_path, ref_text = _lookup_voice(req.voice, emotion)

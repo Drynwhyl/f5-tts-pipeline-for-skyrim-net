@@ -7,6 +7,7 @@ import shutil
 import logging
 import threading
 from pathlib import Path
+from urllib.parse import urlencode
 
 import httpx
 import uvicorn
@@ -20,10 +21,18 @@ logger = logging.getLogger("f5-tts-web")
 
 from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
 from semantic_infer import DEFAULT_SEMANTIC_CHUNKING, merge_semantic_config
+from unknown_emotions import (
+    append_emotion_alias,
+    default_unknown_emotions_path,
+    load_unknown_emotions,
+    normalize_emotion_word,
+    resolve_unknown_emotion,
+)
 
 BASE_DIR = Path(os.environ.get("F5_TTS_BASE_DIR", "/workspace/f5-tts")).expanduser()
 VOICES_DIR = Path(os.environ.get("F5_TTS_VOICES_DIR", os.environ.get("F5_VOICES_DIR", str(BASE_DIR / "voices")))).expanduser()
 CONFIG_PATH = Path(os.environ.get("F5_TTS_CONFIG_PATH", str(BASE_DIR / "config.json"))).expanduser()
+UNKNOWN_EMOTIONS_PATH = default_unknown_emotions_path(CONFIG_PATH)
 API_URL = os.environ.get("F5_TTS_API_URL", "http://localhost:8000")
 CORE_EMOTIONS = ["normal", "calm", "happy", "sad", "aggressive", "scared"]
 CLONED_VOICES_DIR_NAME = "_cloned"
@@ -640,6 +649,70 @@ async def config_save(request: Request):
             "message": {"type": "success", "text": "Settings saved."},
         },
     )
+
+
+@app.get("/emotion-aliases", response_class=HTMLResponse)
+def unknown_emotion_aliases_page(request: Request):
+    queue = load_unknown_emotions(UNKNOWN_EMOTIONS_PATH)
+    pending = sorted(
+        queue.get("pending", {}).values(),
+        key=lambda e: (e.get("last_seen", ""), e.get("count", 0)),
+        reverse=True,
+    )
+    ignored = sorted(queue.get("ignored", {}).values(), key=lambda e: e.get("word", ""))
+    message_text = request.query_params.get("message")
+    message_type = request.query_params.get("type", "success")
+    return templates.TemplateResponse(
+        "unknown_emotions.html",
+        {
+            "request": request,
+            "pending": pending,
+            "ignored": ignored,
+            "core_emotions": CORE_EMOTIONS,
+            "message": {"type": message_type, "text": message_text} if message_text else None,
+        },
+    )
+
+
+@app.post("/emotion-aliases/map")
+async def map_unknown_emotion_alias(request: Request):
+    form = await request.form()
+    word = normalize_emotion_word(form.get("word", ""))
+    core = normalize_emotion_word(form.get("core", ""))
+    if not word or core not in CORE_EMOTIONS:
+        return RedirectResponse("/emotion-aliases?type=error&message=Invalid%20alias%20mapping.", status_code=303)
+
+    cfg = load_config()
+    if not append_emotion_alias(cfg, core, word):
+        return RedirectResponse("/emotion-aliases?type=error&message=Invalid%20alias%20mapping.", status_code=303)
+
+    save_config(cfg)
+    resolve_unknown_emotion(UNKNOWN_EMOTIONS_PATH, word, "delete")
+    threading.Thread(target=_reload_api, daemon=True).start()
+    query = urlencode({"message": f"Mapped {word} to {core}."})
+    return RedirectResponse(f"/emotion-aliases?{query}", status_code=303)
+
+
+@app.post("/emotion-aliases/ignore")
+async def ignore_unknown_emotion_alias(request: Request):
+    form = await request.form()
+    word = normalize_emotion_word(form.get("word", ""))
+    if not word:
+        return RedirectResponse("/emotion-aliases?type=error&message=Missing%20alias.", status_code=303)
+    resolve_unknown_emotion(UNKNOWN_EMOTIONS_PATH, word, "ignore")
+    query = urlencode({"message": f"Ignored {word}."})
+    return RedirectResponse(f"/emotion-aliases?{query}", status_code=303)
+
+
+@app.post("/emotion-aliases/delete")
+async def delete_unknown_emotion_alias(request: Request):
+    form = await request.form()
+    word = normalize_emotion_word(form.get("word", ""))
+    if not word:
+        return RedirectResponse("/emotion-aliases?type=error&message=Missing%20alias.", status_code=303)
+    resolve_unknown_emotion(UNKNOWN_EMOTIONS_PATH, word, "delete")
+    query = urlencode({"message": f"Deleted {word}."})
+    return RedirectResponse(f"/emotion-aliases?{query}", status_code=303)
 
 
 @app.get("/tts-test", response_class=HTMLResponse)

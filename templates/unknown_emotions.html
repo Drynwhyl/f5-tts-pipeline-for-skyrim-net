@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% block title %}Alias Review - F5-TTS Manager{% endblock %}
+{% block content %}
+<div class="page-header">
+  <h1>Alias Review</h1>
+</div>
+
+{% if pending %}
+<div class="review-table-wrap">
+  <table class="review-table">
+    <thead>
+      <tr>
+        <th>Unknown word</th>
+        <th>Count</th>
+        <th>Last seen</th>
+        <th>Context</th>
+        <th>Action</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for item in pending %}
+      <tr>
+        <td><code>{{ item.word }}</code></td>
+        <td>{{ item.count }}</td>
+        <td>
+          <div>{{ item.last_seen }}</div>
+          {% if item.first_seen and item.first_seen != item.last_seen %}
+          <div class="muted-small">First: {{ item.first_seen }}</div>
+          {% endif %}
+        </td>
+        <td>
+          {% if item.last_voice %}
+          <div class="muted-small">Voice: {{ item.last_voice }}</div>
+          {% endif %}
+          {% if item.last_input_excerpt %}
+          <div class="excerpt">{{ item.last_input_excerpt }}</div>
+          {% endif %}
+        </td>
+        <td>
+          <div class="review-actions">
+            <form method="POST" action="/emotion-aliases/map" class="inline-form">
+              <input type="hidden" name="word" value="{{ item.word }}">
+              <select name="core" aria-label="Core emotion for {{ item.word }}">
+                {% for core in core_emotions %}
+                <option value="{{ core }}">{{ core }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit" class="btn btn-primary btn-sm">Map</button>
+            </form>
+            <form method="POST" action="/emotion-aliases/ignore">
+              <input type="hidden" name="word" value="{{ item.word }}">
+              <button type="submit" class="btn btn-secondary btn-sm">Ignore</button>
+            </form>
+            <form method="POST" action="/emotion-aliases/delete">
+              <input type="hidden" name="word" value="{{ item.word }}">
+              <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+            </form>
+          </div>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% else %}
+<div class="empty-state">
+  <h2>No unknown aliases</h2>
+  <p>Unknown emotion tags from speech requests will appear here.</p>
+</div>
+{% endif %}
+
+{% if ignored %}
+<details class="ignored-review">
+  <summary>Ignored aliases ({{ ignored | length }})</summary>
+  <div class="ignored-list">
+    {% for item in ignored %}
+    <code>{{ item.word }}</code>
+    {% endfor %}
+  </div>
+</details>
+{% endif %}
+{% endblock %}
