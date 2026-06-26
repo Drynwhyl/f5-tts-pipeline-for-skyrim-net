@@ -264,6 +264,16 @@ def _build_emotion_map(cfg: dict) -> dict[str, str]:
     return mapping
 
 
+def _known_emotion_words(cfg: dict) -> set[str]:
+    words = set()
+    for core, aliases in (cfg.get("emotion_map", {}) or {}).items():
+        core = core.strip().lower()
+        if core:
+            words.add(core)
+        words.update(alias.strip().lower() for alias in aliases if alias.strip())
+    return words
+
+
 def _transcribe_audio_file(audio_path: str) -> str:
     """Transcribe a single audio file using Whisper turbo."""
     try:
@@ -447,6 +457,48 @@ def parse_emotion_tag(text: str, tag_open: str, tag_close: str) -> tuple[Optiona
 
     cleaned = re.sub(pattern, "", text).strip()
     return matched_emotion.lower(), cleaned
+
+
+def parse_bare_emotion_prefix(text: str, cfg: dict) -> tuple[Optional[str], str]:
+    """Handle clients that strip tag delimiters but leave the leading alias word."""
+    match = re.match(r"^\s*([\w-]+)\b", text)
+    if not match:
+        return None, text
+
+    candidate = match.group(1).lower()
+    if candidate not in _known_emotion_words(cfg):
+        return None, text
+
+    cleaned = re.sub(r"^[\s:;,.!?—–-]+", "", text[match.end():]).strip()
+    if not cleaned:
+        return None, text
+    return candidate, cleaned
+
+
+def _parse_request_emotion(
+    text: str,
+    voice: str,
+    allow_bare_prefix: bool = False,
+    record_unknown: bool = True,
+) -> tuple[Optional[str], str]:
+    tag_cfg = app_config.get("emotion_tag", {"open": "[", "close": "]"})
+    emotion, clean_text = parse_emotion_tag(text, tag_cfg["open"], tag_cfg["close"])
+    source = "tag"
+
+    if not emotion and allow_bare_prefix:
+        emotion, clean_text = parse_bare_emotion_prefix(text, app_config)
+        source = "bare-prefix"
+
+    if not emotion:
+        return None, text
+
+    if source == "tag" and record_unknown:
+        if record_unknown_emotion(UNKNOWN_EMOTIONS_PATH, emotion, app_config, voice=voice, input_text=text):
+            logger.warning("Queued unknown emotion alias '%s' for review", emotion)
+
+    mapped = app_emotion_map.get(emotion, emotion)
+    logger.info("Emotion hint parsed source=%s voice=%s raw=%s mapped=%s", source, voice, emotion, mapped)
+    return mapped, clean_text
 
 
 def load_voice_registry():
@@ -992,13 +1044,7 @@ def text_to_speech(req: TTSRequest):
     if model_obj is None or vocoder is None:
         raise HTTPException(status_code=500, detail="Model not loaded")
 
-    tag_cfg = app_config.get("emotion_tag", {"open": "[", "close": "]"})
-    emotion, gen_text_clean = parse_emotion_tag(req.input, tag_cfg["open"], tag_cfg["close"])
-    if emotion:
-        if record_unknown_emotion(UNKNOWN_EMOTIONS_PATH, emotion, app_config, voice=req.voice, input_text=req.input):
-            logger.warning("Queued unknown emotion alias '%s' for review", emotion)
-        emotion = app_emotion_map.get(emotion, emotion)
-
+    emotion, gen_text_clean = _parse_request_emotion(req.input, req.voice)
     ref_audio_path, ref_text = _lookup_voice(req.voice, emotion)
     save_ref = str(Path(ref_audio_path).with_suffix(".txt")) if ref_audio_path.startswith(VOICES_DIR) else None
     speed = req.speed if req.speed is not None else _get_dynamic_speed(ref_audio_path, ref_text, gen_text_clean, 1.0)
@@ -1011,11 +1057,7 @@ def text_to_speech(req: TTSRequest):
 
 @app.post("/v1/audio/chunks/preview")
 def preview_chunks(req: TTSRequest):
-    tag_cfg = app_config.get("emotion_tag", {"open": "[", "close": "]"})
-    emotion, gen_text_clean = parse_emotion_tag(req.input, tag_cfg["open"], tag_cfg["close"])
-    if emotion:
-        emotion = app_emotion_map.get(emotion, emotion)
-
+    emotion, gen_text_clean = _parse_request_emotion(req.input, req.voice, record_unknown=False)
     ref_audio_path, ref_text = _lookup_voice(req.voice, emotion)
     speed = req.speed if req.speed is not None else _get_dynamic_speed(ref_audio_path, ref_text, gen_text_clean, 1.0)
     speed = _apply_voice_speed_override(req.voice, speed)
@@ -1163,7 +1205,7 @@ async def openai_transcriptions(
 from starlette.requests import Request as StarRequest
 
 
-def _get_speaker_ref(speaker_wav_val: str) -> tuple[str, str]:
+def _get_speaker_ref(speaker_wav_val: str, emotion: Optional[str] = None) -> tuple[str, str]:
     """Resolve a speaker name (string) from the XTTS JSON format to ref audio/text."""
     name = Path(speaker_wav_val).stem
     # Check player voice ignore before any lookup
@@ -1173,7 +1215,7 @@ def _get_speaker_ref(speaker_wav_val: str) -> tuple[str, str]:
             logger.info("Ignored player voice '%s', returning silence", speaker_wav_val)
             return ("__silence__", "")
     if name in voice_registry:
-        return _lookup_voice(name)
+        return _lookup_voice(name, emotion)
     # If not in registry, try the raw path
     p = Path(speaker_wav_val)
     if p.is_file():
@@ -1201,16 +1243,18 @@ async def tts_to_audio(request: StarRequest):
         if not speaker_wav:
             raise HTTPException(status_code=422, detail="Field 'speaker_wav' is required")
 
-        ref_audio_path, ref_text = _get_speaker_ref(speaker_wav)
+        voice_name = Path(speaker_wav).stem
+        emotion, gen_text_clean = _parse_request_emotion(gen_text, voice_name, allow_bare_prefix=True)
+        ref_audio_path, ref_text = _get_speaker_ref(speaker_wav, emotion)
         save_ref = str(Path(ref_audio_path).with_suffix(".txt")) if ref_audio_path.startswith(VOICES_DIR) else None
-        speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text, 1.0)
-        speed = _apply_voice_speed_override(Path(speaker_wav).stem, speed)
+        speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text_clean, 1.0)
+        speed = _apply_voice_speed_override(voice_name, speed)
         infer_started = time.perf_counter()
         content, _ = await run_in_threadpool(
             _tts_infer,
             ref_audio_path,
             ref_text,
-            gen_text,
+            gen_text_clean,
             speed,
             save_ref_text_to=save_ref,
         )
@@ -1220,7 +1264,7 @@ async def tts_to_audio(request: StarRequest):
             "TTS /tts_to_audio json voice=%s language=%s text_len=%d bytes=%d audio=%.2fs inference=%.1fms",
             speaker_wav,
             language,
-            len(gen_text),
+            len(gen_text_clean),
             len(content),
             audio_duration if audio_duration is not None else -1,
             infer_elapsed,
@@ -1242,6 +1286,9 @@ async def tts_to_audio(request: StarRequest):
         if not gen_text:
             raise HTTPException(status_code=422, detail="Field 'text' is required")
 
+        voice_name = Path(speaker_name).stem if speaker_name else ""
+        emotion, gen_text_clean = _parse_request_emotion(gen_text, voice_name, allow_bare_prefix=True)
+
         ref_audio_path = ""
         ref_text = ""
         cleanup_tmp = False
@@ -1254,9 +1301,8 @@ async def tts_to_audio(request: StarRequest):
                 ref_audio_path = "__silence__"
 
         if speaker_name and not ref_audio_path:
-            name_no_ext = Path(speaker_name).stem
-            if name_no_ext in voice_registry:
-                ref_audio_path, ref_text = _lookup_voice(name_no_ext)
+            if voice_name in voice_registry:
+                ref_audio_path, ref_text = _lookup_voice(voice_name, emotion)
 
         if not ref_audio_path and speaker_wav_file and hasattr(speaker_wav_file, "read"):
             tmp = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
@@ -1271,15 +1317,14 @@ async def tts_to_audio(request: StarRequest):
 
         save_ref = str(Path(ref_audio_path).with_suffix(".txt")) if ref_audio_path.startswith(VOICES_DIR) else None
         try:
-            speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text, 1.0)
-            voice_name = Path(speaker_name).stem if speaker_name else ""
+            speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text_clean, 1.0)
             speed = _apply_voice_speed_override(voice_name, speed)
             infer_started = time.perf_counter()
             content, _ = await run_in_threadpool(
                 _tts_infer,
                 ref_audio_path,
                 ref_text,
-                gen_text,
+                gen_text_clean,
                 speed,
                 save_ref_text_to=save_ref,
             )
@@ -1289,7 +1334,7 @@ async def tts_to_audio(request: StarRequest):
                 "TTS /tts_to_audio form voice=%s language=%s text_len=%d bytes=%d audio=%.2fs inference=%.1fms",
                 voice_name or speaker_name or "",
                 language,
-                len(gen_text),
+                len(gen_text_clean),
                 len(content),
                 audio_duration if audio_duration is not None else -1,
                 infer_elapsed,

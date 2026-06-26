@@ -1,7 +1,7 @@
 {
   "emotion_tag": {
-    "open": "[",
-    "close": "]"
+    "open": "~",
+    "close": "~"
   },
   "emotion_map": {
     "aggressive": [
@@ -9,7 +9,8 @@
       "furious",
       "annoyed",
       "hostile",
-      "assertive"
+      "assertive",
+      "sardonic"
     ],
     "happy": [
       "joyful",
@@ -72,9 +73,7 @@
     "spectral_penalty": true
   },
   "custom_accent_dict": {
-    "пиздить": "п+издтить",
-    "пиздит": "пизд+ит",
-    "обливион": "обл+ивион"
+    "пиздить": "п+издтитьпиздит: пизд+итобливион: обл+ивион"
   },
   "fix_gen_text": {
     "sentence_case": true,
@@ -87,7 +86,7 @@
     "max_gen_budget_sec": 10.0,
     "min_chunk_sec": 1.4,
     "duration_margin": 1.15,
-    "frame_margin": 1.1,
+    "frame_margin": 1.0,
     "ref_guard_enabled": true,
     "ref_guard_silence_ms": 300,
     "ref_guard_speed_scale_ms": 500,
