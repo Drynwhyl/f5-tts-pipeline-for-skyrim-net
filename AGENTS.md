@@ -37,6 +37,31 @@ Disposable Vast workflow:
 - Do not preserve `/workspace/f5-tts-env`, `.cache`, `.hf_home`, or
   `f5-tts-cache`; these are rebuildable.
 
+### Cloud copy verification notes
+
+The Google Drive upload was tested end to end on 2026-06-26:
+
+- `scripts/upload_cloud_payload.sh` successfully uploaded
+  `/F5-TTS-Vast/current/f5-tts-data.tar.zst` and its SHA-256 file.
+- `scripts/upload_codex_state.sh` successfully uploaded the current Codex
+  archive and SHA-256 file under `/F5-TTS-Vast/codex/current/`.
+- Wait for `vastai show instance` to report `Cloud Copy Operation Complete`;
+  the initial `vastai copy` response only confirms that the transfer was
+  queued.
+- The local `gdrive:` rclone remote may exist with an empty OAuth token and
+  fail with `empty token found`. Do not rely on local rclone for verification.
+- A direct `vastai copy drive.<id>:<large-file> C.<instance>:<path>` restore may
+  report that it was initiated without actually starting, and can leave a
+  stale zero-byte directory entry. It worked for small checksum files but was
+  unreliable for the large archive.
+- For an end-to-end verification, use `vastai cloud copy` with
+  `--transfer "Cloud To Instance"` to restore the cloud directory into a
+  temporary path, then run `sha256sum -c` there. Both the 1.2 GiB F5-TTS
+  archive and the Codex archive passed this round-trip checksum test.
+- Avoid capturing or sharing raw output from `vastai show connections
+  --api-key ...`; this CLI version may echo a request URL containing the API
+  key.
+
 ## Environment
 
 - Python venv: `~/f5-tts-env` — activate before running any python/pip commands
