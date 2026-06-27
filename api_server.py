@@ -37,6 +37,13 @@ from f5_tts.infer.utils_infer import (
 )
 from semantic_infer import DEFAULT_SEMANTIC_CHUNKING, build_chunk_plan, infer_process_semantic, merge_semantic_config
 from audio_utils import trim_audio_to_sentence_boundary, normalize_loudness, DEFAULT_MAX_MS, DEFAULT_MIN_SILENCE_LEN, DEFAULT_SILENCE_THRESH, DEFAULT_KEEP_SILENCE, DEFAULT_NORMALIZATION_TARGET, DEFAULT_NORMALIZE_ON_FLY, DEFAULT_SPECTRAL_PENALTY
+from chatterbox_probe import (
+    PROBE_AUDIO_BYTES,
+    parse_chatterbox_tags,
+    resolve_uploaded_file,
+    router as chatterbox_probe_router,
+    set_audio_generator,
+)
 from unknown_emotions import default_unknown_emotions_path, record_unknown_emotion
 
 logging.basicConfig(level=logging.INFO)
@@ -58,6 +65,7 @@ DEFAULT_REF_AUDIO = os.environ.get("F5_DEFAULT_REF_AUDIO", "")
 MODEL_CFG = dict(dim=1024, depth=22, heads=16, ff_mult=2, text_dim=512, conv_layers=4)
 
 app = FastAPI(title="F5-TTS OpenAI-Compatible API")
+app.include_router(chatterbox_probe_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -108,10 +116,15 @@ async def log_requests(request, call_next):
         resp_body += chunk
 
     elapsed = (time.perf_counter() - started) * 1000
+    response_content_type = response.headers.get("content-type", "")
+    if response_content_type.startswith("audio/"):
+        response_summary = f"({len(resp_body)} bytes {response_content_type})"
+    else:
+        response_summary = resp_body[:500].decode("utf-8", errors="replace")
     logger.info(
         "<<< %s %s -> %s in %.1fms\n    body: %s",
         request.method, request.url.path, response.status_code, elapsed,
-        resp_body[:500].decode("utf-8", errors="replace"),
+        response_summary,
     )
 
     from starlette.responses import Response as StarResponse
@@ -1039,6 +1052,86 @@ def _lookup_voice(voice_name: str, emotion: Optional[str] = None) -> tuple[str, 
         )
 
 
+async def _generate_chatterbox_audio(decoded: dict) -> bytes:
+    if model_obj is None or vocoder is None:
+        raise HTTPException(status_code=500, detail="Model not loaded")
+
+    input_text = decoded.get("text")
+    if not isinstance(input_text, str) or not input_text.strip():
+        raise HTTPException(status_code=422, detail="Chatterbox text is required")
+    if input_text.strip().lower() == "ping":
+        logger.info("Chatterbox F5 ping returning silence")
+        return PROBE_AUDIO_BYTES
+
+    speaker = decoded.get("speaker_audio")
+    speaker = speaker if isinstance(speaker, dict) else {}
+    speaker_name = Path(str(speaker.get("orig_name") or speaker.get("path") or "")).stem
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", speaker_name):
+        raise HTTPException(status_code=400, detail=f"Invalid Chatterbox speaker name '{speaker_name}'")
+    if app_config.get("ignore_player_voice", False):
+        ignored = [pattern.lower() for pattern in app_config.get("ignored_voice_patterns", [])]
+        if speaker_name.lower() in ignored:
+            logger.info("Ignored Chatterbox player voice '%s', returning silence", speaker_name)
+            return PROBE_AUDIO_BYTES
+
+    emotion, gen_text, tags = parse_chatterbox_tags(input_text, app_emotion_map)
+    if not gen_text:
+        logger.info("Chatterbox F5 tags-only request returning silence tags=%s", tags)
+        return PROBE_AUDIO_BYTES
+
+    if speaker_name in voice_registry:
+        ref_audio_path, ref_text = _lookup_voice(speaker_name, emotion)
+        reference_source = "registry"
+    else:
+        uploaded_path = resolve_uploaded_file(speaker.get("path"))
+        if uploaded_path is None:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Chatterbox speaker '{speaker_name or 'unknown'}' has no usable reference audio",
+            )
+        ref_audio_path, ref_text = await run_in_threadpool(
+            _ensure_chatterbox_clone,
+            speaker_name,
+            uploaded_path,
+            emotion,
+        )
+        reference_source = "registry-auto-cloned"
+
+    speed = _get_dynamic_speed(ref_audio_path, ref_text, gen_text, 1.0)
+    speed = _apply_voice_speed_override(speaker_name, speed)
+    seed_value = decoded.get("seed")
+    seed = seed_value if isinstance(seed_value, int) and seed_value >= 0 else None
+    started = time.perf_counter()
+    content, _ = await run_in_threadpool(
+        _tts_infer,
+        ref_audio_path,
+        ref_text,
+        gen_text,
+        speed,
+        DEFAULT_NFE_STEP,
+        seed,
+    )
+    elapsed = (time.perf_counter() - started) * 1000
+    logger.info(
+        "Chatterbox F5 generated voice=%s source=%s emotion=%s tags=%s language=%s "
+        "text_len=%d bytes=%d audio=%.2fs speed=%.2f inference=%.1fms",
+        speaker_name,
+        reference_source,
+        emotion or "normal",
+        tags,
+        decoded.get("language") or "",
+        len(gen_text),
+        len(content),
+        _wav_duration_s(content) or 0.0,
+        speed,
+        elapsed,
+    )
+    return content
+
+
+set_audio_generator(_generate_chatterbox_audio)
+
+
 @app.post("/v1/audio/speech")
 def text_to_speech(req: TTSRequest):
     if model_obj is None or vocoder is None:
@@ -1403,6 +1496,10 @@ def _save_cloned_voice(name: str, audio_file: UploadFile, ref_text: str, cloned_
     with open(audio_path, "wb") as f:
         f.write(audio_file.file.read())
 
+    _prepare_cloned_voice(name, audio_path, ref_text)
+
+
+def _prepare_cloned_voice(name: str, audio_path: Path, ref_text: str = "") -> None:
     trim_msg = trim_audio_to_sentence_boundary(str(audio_path), **_get_trim_settings())
     if trim_msg:
         logger.info("Trimmed cloned audio for '%s': %s", name, trim_msg)
@@ -1414,7 +1511,7 @@ def _save_cloned_voice(name: str, audio_file: UploadFile, ref_text: str, cloned_
     _normalize_audio(str(audio_path))
 
     ref_text = _apply_stress(ref_text)
-    text_path = voice_dir / "normal.txt"
+    text_path = audio_path.parent / "normal.txt"
     text_path.write_text(ref_text)
     voice_registry[name] = {
         "emotions": {"normal": {"ref_audio": str(audio_path), "ref_text": ref_text}},
@@ -1422,6 +1519,43 @@ def _save_cloned_voice(name: str, audio_file: UploadFile, ref_text: str, cloned_
         "type": "cloned",
     }
     logger.info(f"Registered cloned character '{name}'")
+
+
+_chatterbox_clone_lock = threading.Lock()
+
+
+def _ensure_chatterbox_clone(
+    name: str,
+    source_path: Path,
+    emotion: Optional[str] = None,
+) -> tuple[str, str]:
+    with _chatterbox_clone_lock:
+        if name not in voice_registry:
+            cloned_name = app_config.get("cloned_voices_dir", CLONED_VOICES_DIR_NAME)
+            cloned_base = Path(VOICES_DIR) / cloned_name
+            cloned_base.mkdir(parents=True, exist_ok=True)
+            voice_dir = cloned_base / name
+            voice_dir.mkdir(parents=True, exist_ok=True)
+            suffix = source_path.suffix.lower()
+            if suffix not in (".wav", ".mp3", ".flac", ".m4a", ".ogg"):
+                suffix = ".wav"
+            audio_path = voice_dir / f"normal{suffix}"
+            shutil.copyfile(source_path, audio_path)
+            logger.info(
+                "Persisting new Chatterbox voice '%s' from %s to %s",
+                name,
+                source_path,
+                audio_path,
+            )
+            try:
+                _prepare_cloned_voice(name, audio_path)
+            except Exception:
+                logger.exception("Failed to prepare Chatterbox clone '%s'", name)
+                shutil.rmtree(voice_dir, ignore_errors=True)
+                voice_registry.pop(name, None)
+                raise
+
+        return _lookup_voice(name, emotion)
 
 
 @app.post("/create_and_store_latents")

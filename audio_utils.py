@@ -36,7 +36,8 @@ def trim_audio_to_sentence_boundary(
     try:
         from pydub import AudioSegment, silence
 
-        audio = AudioSegment.from_file(audio_path)
+        with open(audio_path, "rb") as source:
+            audio = AudioSegment.from_file(source)
         orig_len = len(audio)
 
         if orig_len <= max_ms:
@@ -67,13 +68,15 @@ def trim_audio_to_sentence_boundary(
         if len(trimmed) >= orig_len:
             return ""
 
-        if len(trimmed) < 1000:
+        min_useful_ms = min(max_ms, max(3000, max_ms // 2))
+        if len(trimmed) < min_useful_ms:
             trimmed = audio[:max_ms]
 
         with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp:
             tmp_path = tmp.name
         try:
-            trimmed.export(tmp_path, format="wav")
+            with open(tmp_path, "wb") as output:
+                trimmed.export(output, format="wav")
             Path(tmp_path).replace(audio_path)
         finally:
             Path(tmp_path).unlink(missing_ok=True)

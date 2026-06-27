@@ -255,6 +255,10 @@ SkyrimNet requests use this default; TTS Preview slider overrides it.
 | `POST` | `/v1/reload` | Reload config + voice registry from disk (no model restart needed) |
 | `POST` | `/tts_to_audio` or `/tts_to_audio/` | **XTTS-native TTS** (JSON or multipart). Fields: `text`, `speaker_wav` (string or file), `language`, `save_path` |
 | `POST` | `/create_and_store_latents` | **XTTS Live Cloning** (JSON or multipart). Fields: `speaker_name`, `speaker_wav` (string or file), `text`, `language` |
+| `POST` | `/gradio_api/upload` | **Chatterbox compatibility:** upload SkyrimNet voice samples |
+| `POST` | `/gradio_api/call/generate_audio` | **Chatterbox compatibility:** submit the 30-field Gradio generation payload |
+| `GET` | `/gradio_api/call/generate_audio/{event_id}` | Run F5 generation and return the Gradio SSE result |
+| `GET` | `/gradio_api/file={path}` | Download uploaded references or generated F5 audio |
 | `GET` | `/v1/voices` | List voices (flat array, XTTS format) |
 | `POST` | `/v1/voices` | Create voice (multipart: `name`, `files`, `reference_text`) |
 | `GET` | `/v1/languages` | Returns `["ru"]` |
@@ -262,6 +266,21 @@ SkyrimNet requests use this default; TTS Preview slider overrides it.
 | `GET` | `/health` | Health check with device/model/characters info |
 | `POST` | `/v1/transcribe` | Whisper transcription (multipart: `audio`, `language`, `model` turbo/large) |
 | `POST` | `/v1/audio/transcriptions` | OpenAI-compatible STT (used by SkyrimNet). `file`, `model`, `language` |
+
+### Chatterbox compatibility
+
+- SkyrimNet must use the Chatterbox backend with `Enable Audio Tags` enabled.
+- Square-bracket Chatterbox tags are removed before inference. The first recognized
+  emotion or sound tag selects an F5 emotion profile; for example, `[happy]`,
+  `[chuckle]`, and `[laugh]` select `happy`, while `[whispering]` selects `calm`.
+- The uploaded file's `orig_name` selects a registered character. On first use,
+  unknown names are prepared and persisted under `voices/_cloned/<name>/` using
+  the same trim, transcription, stress, and loudness-normalization pipeline as
+  XTTS live cloning.
+- Chatterbox model sliders are accepted for protocol compatibility but ignored by
+  F5. Non-negative `seed`, SkyrimNet timeout/retry settings, allowed tags, and text
+  segmentation still take effect.
+- `ping` and tag-only requests return a short silence WAV without running inference.
 
 ### XTTS JSON request formats
 
