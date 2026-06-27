@@ -37,10 +37,12 @@ fi
 cp -f "$archive_path" "$STAGING/codex-state.tar.zst"
 
 sha_path="$(find_file "${ARCHIVE}.sha256" "${ARCHIVE_NAME}.sha256" "$SEARCH_DIR")"
-if [[ -n "$sha_path" ]]; then
-  cp -f "$sha_path" "$STAGING/codex-state.tar.zst.sha256"
-  (cd "$STAGING" && sha256sum -c codex-state.tar.zst.sha256)
+if [[ -z "$sha_path" ]]; then
+  echo "Missing Codex state checksum: ${ARCHIVE}.sha256" >&2
+  exit 1
 fi
+cp -f "$sha_path" "$STAGING/codex-state.tar.zst.sha256"
+(cd "$STAGING" && sha256sum -c codex-state.tar.zst.sha256)
 
 mkdir -p "$WORKSPACE_DIR"
 tar --zstd -xf "$STAGING/codex-state.tar.zst" -C "$WORKSPACE_DIR"

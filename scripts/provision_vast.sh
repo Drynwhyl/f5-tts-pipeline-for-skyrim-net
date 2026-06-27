@@ -144,24 +144,40 @@ restore_codex_from_cloud() {
   mkdir -p "$incoming_dir"
 
   log "Requesting Codex state restore from $cloud_src."
-  for filename in codex-state.tar.zst codex-state.tar.zst.sha256; do
-    vastai copy \
-      "drive.$connection_id:${cloud_src%/}/$filename" \
-      "C.$instance_id:$incoming_dir/$filename" \
-      --api-key "$api_key" || true
-  done
+  if output="$(vastai cloud copy \
+      --src "${cloud_src%/}" \
+      --dst "$incoming_dir" \
+      --instance "$instance_id" \
+      --connection "$connection_id" \
+      --transfer "Cloud To Instance" \
+      --api-key "$api_key" 2>&1)"; then
+    status=0
+  else
+    status=$?
+  fi
+  printf '%s\n' "$output"
+  if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
+    log "Codex state Cloud Copy request failed; continuing without restored Codex state."
+    return 0
+  fi
 
   archive_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst" "$timeout_sec" 5 2)" || {
     log "Codex state archive was not restored within ${timeout_sec}s; continuing without session restore."
     return 0
   }
-  sha_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst.sha256" 60 5 2)" || true
+  sha_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst.sha256" 60 5 2)" || {
+    log "Codex state checksum was not restored; refusing to extract an unverified archive."
+    return 0
+  }
 
-  if [[ -n "$sha_path" ]]; then
-    mkdir -p "$current_dir"
-    cp -f "$sha_path" "$current_dir/codex-state.tar.zst.sha256"
-  fi
+  mkdir -p "$current_dir"
+  cp -f "$sha_path" "$current_dir/codex-state.tar.zst.sha256"
   cp -f "$archive_path" "$current_dir/codex-state.tar.zst"
+
+  if ! (cd "$current_dir" && sha256sum -c codex-state.tar.zst.sha256); then
+    log "Codex state checksum verification failed; refusing to extract the archive."
+    return 0
+  fi
 
   bash "$F5_TTS_BASE_DIR/scripts/restore_codex_state.sh" "$current_dir/codex-state.tar.zst" || {
     log "Codex state restore failed; continuing without restored Codex state."

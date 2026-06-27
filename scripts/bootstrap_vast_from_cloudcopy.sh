@@ -126,24 +126,25 @@ if [[ "${F5_TTS_SKIP_CLOUD_COPY:-0}" != "1" ]]; then
     rm -rf "$INCOMING_DIR"
     mkdir -p "$INCOMING_DIR"
 
-    write_status "Requesting Vast copy from \`$CLOUD_SRC\` to \`$INCOMING_DIR/\`."
-    log "Requesting Vast copy restore for instance $INSTANCE_ID."
-    for filename in f5-tts-data.tar.zst f5-tts-data.tar.zst.sha256; do
-      if output="$(vastai copy \
-          "drive.$CONNECTION_ID:${CLOUD_SRC%/}/$filename" \
-          "C.$INSTANCE_ID:$INCOMING_DIR/$filename" \
-          --api-key "$API_KEY" 2>&1)"; then
-        status=0
-      else
-        status=$?
-      fi
-      printf '%s\n' "$output"
-      if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
-        write_status "Vast copy request failed for $filename."
-        echo "Vast copy request failed for $filename." >&2
-        exit 1
-      fi
-    done
+    write_status "Requesting Vast Cloud Copy from \`$CLOUD_SRC\` to \`$INCOMING_DIR/\`."
+    log "Requesting Vast directory Cloud Copy restore for instance $INSTANCE_ID."
+    if output="$(vastai cloud copy \
+        --src "${CLOUD_SRC%/}" \
+        --dst "$INCOMING_DIR" \
+        --instance "$INSTANCE_ID" \
+        --connection "$CONNECTION_ID" \
+        --transfer "Cloud To Instance" \
+        --api-key "$API_KEY" 2>&1)"; then
+      status=0
+    else
+      status=$?
+    fi
+    printf '%s\n' "$output"
+    if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
+      write_status "Vast directory Cloud Copy request failed."
+      echo "Vast directory Cloud Copy request failed." >&2
+      exit 1
+    fi
 
     write_status "Waiting for restored payload files to become stable."
     promote_copy_result "$INCOMING_DIR/f5-tts-data.tar.zst.sha256" "$SHA" || {

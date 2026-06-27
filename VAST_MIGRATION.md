@@ -135,8 +135,9 @@ bash /workspace/f5-tts/scripts/diagnose_vast_startup.sh
 The provisioning script clones/pulls the repo, configures GitHub push
 credentials when `GITHUB_TOKEN` is set, installs Codex into `/workspace`,
 restores Codex state when available, then runs
-`bootstrap_vast_from_cloudcopy.sh`. The bootstrap script runs `vastai copy` from
-inside the new instance, waits for stable files under
+`bootstrap_vast_from_cloudcopy.sh`. The bootstrap script runs one directory
+`vastai cloud copy --transfer "Cloud To Instance"` from inside the new instance,
+waits for stable files under
 `/workspace/migration/incoming/`, verifies the checksum, builds the venv, applies
 runtime patches, and installs supervisor/Caddy services.
 
@@ -218,20 +219,19 @@ Manual local-only Codex backup, without uploading to Drive:
 Optional restore on a future instance:
 
 ```bash
-vastai copy \
-  drive.<connection id>:/F5-TTS-Vast/codex/current/codex-state.tar.zst \
-  C.<new instance id>:/workspace/cloudsync/codex/current/codex-state.tar.zst
-vastai copy \
-  drive.<connection id>:/F5-TTS-Vast/codex/current/codex-state.tar.zst.sha256 \
-  C.<new instance id>:/workspace/cloudsync/codex/current/codex-state.tar.zst.sha256
+vastai cloud copy \
+  --src /F5-TTS-Vast/codex/current \
+  --dst /workspace/cloudsync/codex/current \
+  --instance <new instance id> \
+  --connection <connection id> \
+  --transfer "Cloud To Instance"
 
 cd /workspace/f5-tts
 ./scripts/restore_codex_state.sh
 ```
 
-Vast treats file destinations as directories for this copy mode, so restore may
-create `codex-state.tar.zst/codex-state.tar.zst`. Move the nested file up before
-running `restore_codex_state.sh` if doing this manually.
+The restore script requires the matching SHA-256 file and refuses to extract an
+unverified archive.
 
 ## First Cloud Upload
 
@@ -335,7 +335,8 @@ For stuck uploads to cloud storage, cancel from the Vast Cloud Copy UI or try:
 vastai cancel copy drive.<connection id>
 ```
 
-Then rerun the same bootstrap or upload command. Prefer `vastai copy` with
-structured locations (`C.<instance>:/path`, `drive.<connection>:/path`) over
-`vastai cloud copy`; the latter accepted requests but produced empty transfers in
-testing on 2026-06-24.
+Then rerun the same bootstrap or upload command. For restores, prefer one
+directory `vastai cloud copy --transfer "Cloud To Instance"` operation so the
+archive and checksum arrive together. For uploads, continue using `vastai copy`
+with structured locations (`C.<instance>:/path`,
+`drive.<connection>:/path`).

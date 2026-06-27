@@ -21,8 +21,9 @@ VM setup. On Vast, use `supervisorctl` and the `/workspace/...` paths above.
 
 Disposable Vast workflow:
 
-- Use Vast `copy` with structured cloud endpoints, not hand-managed
-  `rclone.conf`, for model/voice payloads.
+- Use `vastai cloud copy --transfer "Cloud To Instance"` for directory
+  restores, and Vast `copy` with structured cloud endpoints for uploads. Do not
+  use hand-managed `rclone.conf` files for model/voice payloads.
 - Clone the official Vast CUDA template without removing its stock Startup
   Script, `entrypoint.sh`. That entrypoint creates `/workspace`, propagates SSH
   keys, starts Supervisor, and invokes `PROVISIONING_SCRIPT`; the provisioning
