@@ -53,8 +53,11 @@ if [[ "$DRY_RUN" == "1" ]]; then
   exit 0
 fi
 
-output="$("${cmd[@]}" 2>&1)"
-status=$?
+if output="$("${cmd[@]}" 2>&1)"; then
+  status=0
+else
+  status=$?
+fi
 printf '%s\n' "$output"
 if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
   echo "Vast Cloud Copy request failed." >&2

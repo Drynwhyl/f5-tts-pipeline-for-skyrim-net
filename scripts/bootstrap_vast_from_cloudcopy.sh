@@ -129,11 +129,14 @@ if [[ "${F5_TTS_SKIP_CLOUD_COPY:-0}" != "1" ]]; then
     write_status "Requesting Vast copy from \`$CLOUD_SRC\` to \`$INCOMING_DIR/\`."
     log "Requesting Vast copy restore for instance $INSTANCE_ID."
     for filename in f5-tts-data.tar.zst f5-tts-data.tar.zst.sha256; do
-      output="$(vastai copy \
-        "drive.$CONNECTION_ID:${CLOUD_SRC%/}/$filename" \
-        "C.$INSTANCE_ID:$INCOMING_DIR/$filename" \
-        --api-key "$API_KEY" 2>&1)"
-      status=$?
+      if output="$(vastai copy \
+          "drive.$CONNECTION_ID:${CLOUD_SRC%/}/$filename" \
+          "C.$INSTANCE_ID:$INCOMING_DIR/$filename" \
+          --api-key "$API_KEY" 2>&1)"; then
+        status=0
+      else
+        status=$?
+      fi
       printf '%s\n' "$output"
       if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
         write_status "Vast copy request failed for $filename."

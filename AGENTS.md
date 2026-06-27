@@ -23,6 +23,10 @@ Disposable Vast workflow:
 
 - Use Vast `copy` with structured cloud endpoints, not hand-managed
   `rclone.conf`, for model/voice payloads.
+- Clone the official Vast CUDA template without removing its stock Startup
+  Script, `entrypoint.sh`. That entrypoint creates `/workspace`, propagates SSH
+  keys, starts Supervisor, and invokes `PROVISIONING_SCRIPT`; the provisioning
+  URL is an input to the entrypoint, not a replacement for it.
 - On new instances, the Vast template should set `PROVISIONING_SCRIPT` to
   `scripts/provision_vast.sh`, which clones the repo, configures GitHub auth,
   installs Codex into `/workspace`, restores Codex state, and runs

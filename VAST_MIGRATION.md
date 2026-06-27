@@ -41,6 +41,19 @@ It intentionally excludes:
 Use a separate Google Drive account/folder for Vast cloud storage, then create a
 scoped Vast API key for the template.
 
+Start by cloning the official Vast CUDA template. Keep all of its stock settings,
+especially:
+
+- Docker image and version
+- launch mode
+- Startup Script: `entrypoint.sh`
+- stock environment variables and ports
+
+`entrypoint.sh` is required. It runs the Vast base-image boot sequence that
+creates `/workspace`, propagates the account SSH keys, starts Supervisor and
+Caddy, and finally processes `PROVISIONING_SCRIPT`. The provisioning variable
+does not replace the entrypoint.
+
 Required API key permission groups:
 
 ```json
@@ -75,6 +88,10 @@ RESTORE_CODEX=1
 CODEX_HOME=/workspace/.codex
 ```
 
+Add these as environment-variable name/value pairs in the Vast UI. Do not include
+shell assignment syntax or add literal wrapping quotes to newly added values.
+Keep the official template's existing variables unchanged.
+
 Expose these ports when creating the template:
 
 ```text
@@ -86,17 +103,33 @@ Expose these ports when creating the template:
 10200  F5-TTS Web via Caddy
 ```
 
-Recommended startup setup:
+Template startup setup:
 
-- Leave Startup Scripts / onstart empty.
-- Do not put `entrypoint.sh` into Startup Scripts.
+- Keep the official CUDA template's Startup Script set to `entrypoint.sh`.
 - Set `PROVISIONING_SCRIPT` in the template environment as shown above.
+- Do not also invoke `provision_vast.sh` from Startup Scripts; the entrypoint
+  invokes it through the base-image provisioner.
 
-Fallback if the UI only gives a Startup Scripts box:
+Removing `entrypoint.sh` produces a partially running instance: the launch-mode
+Jupyter server may still be reachable, but `/workspace`, SSH key propagation,
+Supervisor/Caddy initialization, and `PROVISIONING_SCRIPT` execution are
+skipped. If that happens, restore `entrypoint.sh` in the template and create a
+fresh instance.
+
+For diagnosis from a Jupyter terminal:
 
 ```bash
-touch ~/.no_auto_tmux
-bash -lc 'curl -fsSL https://raw.githubusercontent.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net/master/scripts/provision_vast.sh | bash'
+test -x /opt/instance-tools/bin/entrypoint.sh && echo "Vast entrypoint present"
+test -d /workspace && echo "workspace present"
+test -s /root/.ssh/authorized_keys && echo "SSH keys present"
+test -f /.provisioning_complete && echo "base-image provisioning complete"
+test -f /workspace/.f5-tts-bootstrap-complete && echo "F5-TTS bootstrap complete"
+```
+
+After the repository has been cloned, the expanded read-only check is:
+
+```bash
+bash /workspace/f5-tts/scripts/diagnose_vast_startup.sh
 ```
 
 The provisioning script clones/pulls the repo, configures GitHub push
@@ -234,8 +267,9 @@ F5_TTS_CLOUD_COPY_DRY_RUN=1 ./scripts/upload_cloud_payload.sh
 
 ## Fresh Instance Restore
 
-If `PROVISIONING_SCRIPT` is configured, no manual restore is needed. Rent the
-instance and wait for provisioning/bootstrap to complete.
+If the stock `entrypoint.sh` is retained and `PROVISIONING_SCRIPT` is configured,
+no manual restore is needed. Rent the instance and wait for
+provisioning/bootstrap to complete.
 
 Check progress:
 
@@ -246,6 +280,9 @@ cat /workspace/migration/bootstrap-status.md
 tail -f /var/log/portal/f5-tts-api.log
 supervisorctl status f5-tts-api f5-tts-web f5-tts-gradio caddy
 ```
+
+If `/workspace` does not exist, do not debug the project bootstrap yet. The Vast
+base-image entrypoint did not run. Check the template Startup Script first.
 
 Health checks:
 
