@@ -117,6 +117,24 @@ wait_for_stable_file() {
   return 1
 }
 
+find_file_matching_checksum() {
+  local search_dir="$1"
+  local sha_path="$2"
+  local expected_hash candidate
+
+  expected_hash="$(awk 'NR == 1 { print $1 }' "$sha_path")"
+  [[ "$expected_hash" =~ ^[[:xdigit:]]{64}$ ]] || return 1
+
+  while IFS= read -r -d '' candidate; do
+    if [[ "$(sha256sum "$candidate" | awk '{ print $1 }')" == "$expected_hash" ]]; then
+      printf '%s\n' "$candidate"
+      return 0
+    fi
+  done < <(find "$search_dir" -maxdepth 4 -type f -name 'codex-state*.tar.zst' -print0 2>/dev/null)
+
+  return 1
+}
+
 restore_codex_from_cloud() {
   local api_key="${VAST_API_KEY:-${VASTAI_API_KEY:-}}"
   local connection_id="${VAST_CLOUD_CONNECTION_ID:-${F5_TTS_CLOUD_CONNECTION_ID:-}}"
@@ -161,14 +179,18 @@ restore_codex_from_cloud() {
     return 0
   fi
 
-  archive_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst" "$timeout_sec" 5 2)" || {
-    log "Codex state archive was not restored within ${timeout_sec}s; continuing without session restore."
-    return 0
-  }
-  sha_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst.sha256" 60 5 2)" || {
+  sha_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst.sha256" "$timeout_sec" 5 2)" || {
     log "Codex state checksum was not restored; refusing to extract an unverified archive."
     return 0
   }
+  archive_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst" 30 5 2)" || true
+  if [[ -z "$archive_path" ]]; then
+    archive_path="$(find_file_matching_checksum "$incoming_dir" "$sha_path")" || {
+      log "No Codex archive matched the restored checksum; refusing to extract it."
+      return 0
+    }
+    log "Stable Codex archive name was absent; using checksum-matched $(basename "$archive_path")."
+  fi
 
   mkdir -p "$current_dir"
   cp -f "$sha_path" "$current_dir/codex-state.tar.zst.sha256"
