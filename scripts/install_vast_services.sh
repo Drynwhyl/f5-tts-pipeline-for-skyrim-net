@@ -73,12 +73,13 @@ write_conf() {
   local path="$1"
   local name="$2"
   local command="$3"
+  local autostart="${4:-true}"
 
   cat >"$path" <<EOF
 [program:$name]
 environment=PROC_NAME="%(program_name)s"
 command=$command
-autostart=true
+autostart=$autostart
 autorestart=unexpected
 stdout_logfile=/dev/stdout
 redirect_stderr=true
@@ -95,7 +96,7 @@ write_wrapper "/opt/supervisor-scripts/f5-tts-gradio.sh" "F5-TTS Gradio" \
 
 write_conf "/etc/supervisor/conf.d/f5-tts-api.conf" "f5-tts-api" "/opt/supervisor-scripts/f5-tts-api.sh"
 write_conf "/etc/supervisor/conf.d/f5-tts-web.conf" "f5-tts-web" "/opt/supervisor-scripts/f5-tts-web.sh"
-write_conf "/etc/supervisor/conf.d/f5-tts-gradio.conf" "f5-tts-gradio" "/opt/supervisor-scripts/f5-tts-gradio.sh"
+write_conf "/etc/supervisor/conf.d/f5-tts-gradio.conf" "f5-tts-gradio" "/opt/supervisor-scripts/f5-tts-gradio.sh" false
 
 if [[ -f /etc/portal.yaml ]]; then
   python3 - "$API_EXTERNAL_PORT" "$WEB_EXTERNAL_PORT" "$GRADIO_EXTERNAL_PORT" \
@@ -140,7 +141,8 @@ fi
 
 supervisorctl reread
 supervisorctl update
-supervisorctl restart f5-tts-api f5-tts-web f5-tts-gradio
+supervisorctl restart f5-tts-api f5-tts-web
+supervisorctl stop f5-tts-gradio >/dev/null 2>&1 || true
 if supervisorctl status tensorboard >/dev/null 2>&1 && [[ "$REPLACE_TENSORBOARD" == "1" ]]; then
   supervisorctl stop tensorboard || true
 fi

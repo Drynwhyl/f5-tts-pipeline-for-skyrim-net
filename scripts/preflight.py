@@ -77,9 +77,17 @@ def check_gpu(skip_load: bool) -> None:
         fail("torch cannot see CUDA")
     name = torch.cuda.get_device_name(0)
     total_gb = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
+    minimum_gb = float(os.environ.get("F5_TTS_MIN_VRAM_GB", "14"))
+    recommended_gb = float(os.environ.get("F5_TTS_RECOMMENDED_VRAM_GB", "20"))
     print(f"gpu={name} vram={total_gb:.1f}GB")
-    if total_gb < 20:
-        fail("GPU VRAM is below 20 GB")
+    if total_gb < minimum_gb:
+        fail(f"GPU VRAM is below the {minimum_gb:g} GB minimum")
+    if total_gb < recommended_gb:
+        print(
+            f"warning: GPU VRAM is below the recommended {recommended_gb:g} GB; "
+            "avoid concurrent Gradio inference and Whisper Large",
+            file=sys.stderr,
+        )
     if not skip_load:
         x = torch.ones((1,), device="cuda")
         print(f"cuda-smoke={float(x.item())}")

@@ -188,7 +188,6 @@ done
 
 curl -fsS http://127.0.0.1:8000/health
 curl -fsS http://127.0.0.1:5000/ >/dev/null
-curl -fsS http://127.0.0.1:7860/ >/dev/null
 supervisorctl status f5-tts-api f5-tts-web f5-tts-gradio caddy
 
 write_status "Bootstrap completed successfully."
