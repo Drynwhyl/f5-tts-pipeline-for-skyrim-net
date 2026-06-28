@@ -4,7 +4,8 @@ set -euo pipefail
 WORKSPACE_DIR="${WORKSPACE:-/workspace}"
 F5_TTS_BASE_DIR="${F5_TTS_BASE_DIR:-$WORKSPACE_DIR/f5-tts}"
 CURRENT_DIR="${CODEX_BACKUP_DIR:-$WORKSPACE_DIR/cloudsync/codex/current}"
-CLOUD_DST="${CODEX_CLOUD_DST:-/F5-TTS-Vast/codex/current/}"
+PUBLISH_DIR="${CODEX_PUBLISH_DIR:-$WORKSPACE_DIR/cloudsync/codex/publish}"
+CLOUD_DST="${CODEX_CLOUD_DST:-/F5-TTS-Vast/codex/v2/current/}"
 DRY_RUN="${CODEX_CLOUD_COPY_DRY_RUN:-0}"
 API_KEY="${VAST_API_KEY:-${VASTAI_API_KEY:-}}"
 CONNECTION_ID="${VAST_CLOUD_CONNECTION_ID:-${F5_TTS_CLOUD_CONNECTION_ID:-}}"
@@ -33,9 +34,22 @@ if [[ -z "$INSTANCE_ID" ]]; then
 fi
 
 "$F5_TTS_BASE_DIR/scripts/backup_codex_state.sh"
+archive="$CURRENT_DIR/codex-state.tar.zst"
+sha="$CURRENT_DIR/codex-state.tar.zst.sha256"
+if [[ ! -f "$archive" || ! -f "$sha" ]]; then
+  echo "Codex state backup was not created correctly." >&2
+  exit 1
+fi
+
+rm -rf "$PUBLISH_DIR"
+mkdir -p "$PUBLISH_DIR"
+cp -f "$archive" "$PUBLISH_DIR/codex-state.tar.zst"
+cp -f "$sha" "$PUBLISH_DIR/codex-state.tar.zst.sha256"
+cp -f "$archive" "$PUBLISH_DIR/codex-state-$(date -u +%Y%m%dT%H%M%SZ).tar.zst"
+(cd "$PUBLISH_DIR" && sha256sum -c codex-state.tar.zst.sha256)
 
 cmd=(vastai copy
-  "C.$INSTANCE_ID:$CURRENT_DIR/" \
+  "C.$INSTANCE_ID:$PUBLISH_DIR/" \
   "drive.$CONNECTION_ID:$CLOUD_DST" \
   --api-key "$API_KEY")
 

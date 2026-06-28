@@ -63,86 +63,19 @@ determine_instance_id() {
   printf '%s\n' "$instance_id"
 }
 
-find_copy_result() {
-  local search_dir="$1"
-  local expected_path="$2"
-  local basename_expected
-  basename_expected="$(basename "$expected_path")"
-
-  if [[ -f "$expected_path" ]]; then
-    printf '%s\n' "$expected_path"
-    return 0
-  fi
-  if [[ -f "$expected_path/$basename_expected" ]]; then
-    printf '%s\n' "$expected_path/$basename_expected"
-    return 0
-  fi
-  find "$search_dir" -maxdepth 4 -type f -name "$basename_expected" -print -quit 2>/dev/null
-}
-
-wait_for_stable_file() {
-  local search_dir="$1"
-  local expected_path="$2"
-  local timeout_sec="${3:-300}"
-  local poll_sec="${4:-5}"
-  local stable_polls="${5:-2}"
-  local deadline=$((SECONDS + timeout_sec))
-  local stable_count=0
-  local last_size=""
-  local found_path=""
-  local size=""
-
-  while (( SECONDS < deadline )); do
-    found_path="$(find_copy_result "$search_dir" "$expected_path")"
-    if [[ -n "$found_path" && -f "$found_path" ]]; then
-      size="$(stat -c '%s' "$found_path")"
-      if [[ "$size" != "0" && "$size" == "$last_size" ]]; then
-        stable_count=$((stable_count + 1))
-      else
-        stable_count=0
-      fi
-      last_size="$size"
-
-      if (( stable_count >= stable_polls )); then
-        printf '%s\n' "$found_path"
-        return 0
-      fi
-      log "Waiting for stable copy of $(basename "$expected_path") (${size} bytes)..."
-    else
-      log "Waiting for copy result: $(basename "$expected_path")..."
-    fi
-    sleep "$poll_sec"
-  done
-
-  return 1
-}
-
-find_file_matching_checksum() {
-  local search_dir="$1"
-  local sha_path="$2"
-  local expected_hash candidate
-
-  expected_hash="$(awk 'NR == 1 { print $1 }' "$sha_path")"
-  [[ "$expected_hash" =~ ^[[:xdigit:]]{64}$ ]] || return 1
-
-  while IFS= read -r -d '' candidate; do
-    if [[ "$(sha256sum "$candidate" | awk '{ print $1 }')" == "$expected_hash" ]]; then
-      printf '%s\n' "$candidate"
-      return 0
-    fi
-  done < <(find "$search_dir" -maxdepth 4 -type f -name 'codex-state*.tar.zst' -print0 2>/dev/null)
-
-  return 1
-}
-
 restore_codex_from_cloud() {
   local api_key="${VAST_API_KEY:-${VASTAI_API_KEY:-}}"
   local connection_id="${VAST_CLOUD_CONNECTION_ID:-${F5_TTS_CLOUD_CONNECTION_ID:-}}"
   local instance_id="$1"
-  local cloud_src="${CODEX_CLOUD_SRC:-/F5-TTS-Vast/codex/current/}"
+  local cloud_src="${CODEX_CLOUD_SRC:-/F5-TTS-Vast/codex/v2/current/}"
   local current_dir="${CODEX_BACKUP_DIR:-$WORKSPACE_DIR/cloudsync/codex/current}"
-  local incoming_dir="$current_dir/incoming"
+  local incoming_root="$current_dir/incoming"
+  local run_id="run-$(date -u +%Y%m%dT%H%M%SZ)-$$"
+  local incoming_dir="$incoming_root/$run_id"
+  local checksum_retry_dir="$incoming_root/${run_id}-checksum-retry"
+  local archive_retry_dir="$incoming_root/${run_id}-archive-retry"
   local timeout_sec="${CODEX_RESTORE_TIMEOUT_SEC:-300}"
+  local checksum_timeout_sec="${CODEX_CHECKSUM_TIMEOUT_SEC:-90}"
   local archive_path sha_path
 
   if [[ "${RESTORE_CODEX:-1}" != "1" ]]; then
@@ -158,39 +91,45 @@ restore_codex_from_cloud() {
     return 0
   fi
 
-  rm -rf "$incoming_dir"
+  # shellcheck source=scripts/cloud_copy_restore_lib.sh
+  source "$F5_TTS_BASE_DIR/scripts/cloud_copy_restore_lib.sh"
+
   mkdir -p "$incoming_dir"
 
   log "Requesting Codex state restore from $cloud_src."
-  if output="$(vastai cloud copy \
-      --src "${cloud_src%/}" \
-      --dst "$incoming_dir" \
-      --instance "$instance_id" \
-      --connection "$connection_id" \
-      --transfer "Cloud To Instance" \
-      --api-key "$api_key" 2>&1)"; then
-    status=0
-  else
-    status=$?
-  fi
-  printf '%s\n' "$output"
-  if (( status != 0 )) || grep -qiE 'failed with error|authorization error|traceback' <<<"$output"; then
+  if ! cc_request_cloud_copy "$cloud_src" "$incoming_dir" "$instance_id" "$connection_id" "$api_key"; then
     log "Codex state Cloud Copy request failed; continuing without restored Codex state."
     return 0
   fi
 
-  sha_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst.sha256" "$timeout_sec" 5 2)" || {
-    log "Codex state checksum was not restored; refusing to extract an unverified archive."
-    return 0
-  }
-  archive_path="$(wait_for_stable_file "$incoming_dir" "$incoming_dir/codex-state.tar.zst" 30 5 2)" || true
+  sha_path="$(cc_wait_named_file "$incoming_dir" "codex-state.tar.zst.sha256" "$checksum_timeout_sec" 5 2)" || true
+  if [[ -z "$sha_path" ]]; then
+    log "Codex checksum was absent from the directory restore; requesting it separately."
+    if ! cc_request_cloud_copy \
+        "${cloud_src%/}/codex-state.tar.zst.sha256" \
+        "$checksum_retry_dir" "$instance_id" "$connection_id" "$api_key"; then
+      log "Codex checksum retry request failed; refusing to restore unverified state."
+      return 0
+    fi
+    sha_path="$(cc_wait_named_file "$checksum_retry_dir" "codex-state.tar.zst.sha256" 120 5 2)" || {
+      log "Codex state checksum retry timed out; refusing to restore unverified state."
+      return 0
+    }
+  fi
+
+  archive_path="$(cc_wait_checksum_match "$incoming_dir" "$sha_path" "codex-state*.tar.zst" "$timeout_sec" 10)" || true
   if [[ -z "$archive_path" ]]; then
-    archive_path="$(find_file_matching_checksum "$incoming_dir" "$sha_path")" || {
+    log "No Codex archive matched after the first restore; retrying the cloud directory once."
+    if ! cc_request_cloud_copy "$cloud_src" "$archive_retry_dir" "$instance_id" "$connection_id" "$api_key"; then
+      log "Codex archive retry request failed; continuing without restored Codex state."
+      return 0
+    fi
+    archive_path="$(cc_wait_checksum_match "$archive_retry_dir" "$sha_path" "codex-state*.tar.zst" "$timeout_sec" 10)" || {
       log "No Codex archive matched the restored checksum; refusing to extract it."
       return 0
     }
-    log "Stable Codex archive name was absent; using checksum-matched $(basename "$archive_path")."
   fi
+  log "Using checksum-matched Codex archive $(basename "$archive_path")."
 
   mkdir -p "$current_dir"
   cp -f "$sha_path" "$current_dir/codex-state.tar.zst.sha256"

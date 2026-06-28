@@ -76,8 +76,8 @@ VAST_CLOUD_CONNECTION_ID=<numeric Google Drive connection id from vastai show co
 F5_TTS_REPO_URL=https://github.com/Drynwhyl/f5-tts-pipeline-for-skyrim-net.git
 F5_TTS_CLOUD_SRC=/F5-TTS-Vast/current/
 F5_TTS_CLOUD_DST=/F5-TTS-Vast/current/
-CODEX_CLOUD_SRC=/F5-TTS-Vast/codex/current/
-CODEX_CLOUD_DST=/F5-TTS-Vast/codex/current/
+CODEX_CLOUD_SRC=/F5-TTS-Vast/codex/v2/current/
+CODEX_CLOUD_DST=/F5-TTS-Vast/codex/v2/current/
 F5_TTS_BASE_DIR=/workspace/f5-tts
 F5_TTS_VENV=/workspace/f5-tts-env
 GITHUB_TOKEN=<fine-grained GitHub token with Contents read/write for this repo>
@@ -220,7 +220,7 @@ Optional restore on a future instance:
 
 ```bash
 vastai cloud copy \
-  --src /F5-TTS-Vast/codex/current \
+  --src /F5-TTS-Vast/codex/v2/current \
   --dst /workspace/cloudsync/codex/current \
   --instance <new instance id> \
   --connection <connection id> \

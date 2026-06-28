@@ -49,7 +49,11 @@ The Google Drive upload was tested end to end on 2026-06-26:
 - `scripts/upload_cloud_payload.sh` successfully uploaded
   `/F5-TTS-Vast/current/f5-tts-data.tar.zst` and its SHA-256 file.
 - `scripts/upload_codex_state.sh` successfully uploaded the current Codex
-  archive and SHA-256 file under `/F5-TTS-Vast/codex/current/`.
+  archive and SHA-256 file under `/F5-TTS-Vast/codex/v2/current/`.
+- Codex uploads use a clean publish directory containing only the stable
+  archive, its checksum, and one timestamped fallback archive. Never upload
+  `/workspace/cloudsync/codex/current/` directly because it may contain restore
+  staging directories and recursively reproduce `incoming/incoming/...`.
 - Wait for `vastai show instance` to report `Cloud Copy Operation Complete`;
   the initial `vastai copy` response only confirms that the transfer was
   queued.
@@ -66,6 +70,10 @@ The Google Drive upload was tested end to end on 2026-06-26:
 - Avoid capturing or sharing raw output from `vastai show connections
   --api-key ...`; this CLI version may echo a request URL containing the API
   key.
+- Restore scripts use a unique staging directory for every Cloud Copy request,
+  tolerate added directory levels, select archives by SHA-256 rather than path,
+  and separately retry small checksum files when a directory restore omits
+  them.
 
 ## Environment
 
